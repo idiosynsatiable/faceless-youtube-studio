@@ -20,7 +20,8 @@
     "prisma:seed": "tsx prisma/seed.ts",
     "scan:secrets": "bash scripts/scan-secrets.sh",
     "scan:placeholders": "bash scripts/scan-placeholders.sh",
-    "verify": "bash scripts/verify-studio.sh"
+    "verify": "bash scripts/verify-studio.sh",
+    "worker": "tsx src/worker/index.ts"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",

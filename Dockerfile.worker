@@ -1,0 +1,43 @@
+FROM node:20-bookworm-slim AS base
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# Install ffmpeg from the official Debian repo. Pin a specific version range
+# in production by setting FFMPEG_VERSION at build time and using apt
+# version pinning. Operators are responsible for keeping ffmpeg patched.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg ca-certificates dumb-init tini \
+  && rm -rf /var/lib/apt/lists/*
+
+FROM base AS deps
+COPY package.json ./
+RUN npm install --no-audit --no-fund
+
+FROM base AS runner
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json tsconfig.json ./
+COPY src ./src
+COPY prisma ./prisma
+
+# Run ffmpeg-related work as a non-root user with no shell. This container
+# expects:
+# - /var/lib/faceless-studio/inputs mounted read-only (input assets)
+# - /var/lib/faceless-studio/exports mounted read-write (worker outputs)
+# - REDIS_URL pointing at the queue
+RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin worker \
+  && mkdir -p /var/lib/faceless-studio/inputs /var/lib/faceless-studio/exports \
+  && chown -R worker:worker /var/lib/faceless-studio /app
+
+USER worker
+
+ENV NODE_ENV=production \
+    WORKER_OUTPUT_ROOT=/var/lib/faceless-studio/exports \
+    WORKER_INPUT_ALLOWLIST=/var/lib/faceless-studio/inputs \
+    FFMPEG_BINARY=/usr/bin/ffmpeg \
+    WORKER_CONCURRENCY=1 \
+    WORKER_JOB_TIMEOUT_MS=900000
+
+# tini handles signals so SIGTERM reaches the Node process and the worker
+# exits its loop cleanly.
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "--enable-source-maps", "node_modules/.bin/tsx", "src/worker/index.ts"]
