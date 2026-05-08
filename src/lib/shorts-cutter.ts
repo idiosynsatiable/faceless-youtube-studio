@@ -45,7 +45,7 @@ export interface ShortsCutterInput {
 }
 
 const STRONG_CLAIM_RX = /\b(must|always|never|the only|the simplest|the cheapest|the fastest|guaranteed not to|the truth|the real reason)\b/i;
-const NUMBER_RX = /\b\d{1,3}(?:[.,]\d+)?(?:\s?%|x|x faster|x cheaper)?\b/;
+const NUMBER_RX = /\b\d{1,12}(?:[.,]\d+)?(?:\s?%|x|x faster|x cheaper)?/;
 const COMPARISON_RX = /\b(vs|versus|better than|worse than|compared to|in contrast|alternatively)\b/i;
 const TRANSFORMATION_RX = /\b(before|after|used to|turned into|now|then|previously)\b/i;
 const MYTH_RX = /\b(myth|truth|misconception|widely believed|actually|in fact)\b/i;
