@@ -57,6 +57,7 @@ ALLOWED_FILES=(
   './docs/SHORTS_COMPLIANCE.md'
   './README.md'
   './FINAL_VERIFICATION_REPORT.md'
+  './CHANGELOG.md'
 )
 
 found=0
