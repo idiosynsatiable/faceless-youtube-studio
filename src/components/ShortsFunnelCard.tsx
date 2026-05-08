@@ -12,7 +12,7 @@ export default function ShortsFunnelCard() {
   });
   return (
     <div className="card space-y-3">
-      <h2 className="text-lg font-semibold">Shorts -> long-form funnel</h2>
+      <h2 className="text-lg font-semibold">{'Shorts → long-form funnel'}</h2>
       <p className="text-sm text-ink-200">Related long-form: {funnel.relatedLongForm}</p>
       <div>
         <p className="text-xs uppercase tracking-wider text-ink-300">Pinned comment</p>
