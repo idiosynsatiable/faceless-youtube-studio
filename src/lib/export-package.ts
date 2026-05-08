@@ -206,7 +206,9 @@ function buildShortsMarkdown(payload: ShortsBundlePayload): string {
 
 export function buildShortsBundle(input: ShortsBundleInput): ExportBundle {
   const formats = (input.formats && input.formats.length > 0) ? input.formats : ['markdown', 'json'];
-  const variantSeconds = (input.variantSeconds && input.variantSeconds.length > 0) ? input.variantSeconds : [15, 30, 60];
+  const variantSeconds: (15 | 30 | 60)[] = (input.variantSeconds && input.variantSeconds.length > 0)
+    ? input.variantSeconds
+    : [15, 30, 60];
   const variantFormats = variantSeconds.map((s) => VARIANT_FORMAT_MAP[s]);
   const variants = generateShorts({
     niche: input.niche,

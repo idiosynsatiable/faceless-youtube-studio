@@ -1,13 +1,14 @@
-import { describe, expect, it, beforeAll } from 'vitest';
+import { describe, expect, it, beforeEach, vi } from 'vitest';
 
 describe('upload publish requires explicit user authorization', () => {
-  beforeAll(() => {
+  beforeEach(() => {
+    vi.resetModules();
     process.env.YOUTUBE_CLIENT_ID = 'youtube-test-client';
     process.env.YOUTUBE_CLIENT_SECRET = 'youtube-test-secret';
   });
 
   it('returns needs_review with authorization_required when authorization is missing', async () => {
-    const mod = await import('@/lib/youtube-upload?auth-test=1');
+    const mod = await import('@/lib/youtube-upload');
     const draft = mod.preparePackage({
       title: 'demo',
       description: '',
@@ -23,7 +24,7 @@ describe('upload publish requires explicit user authorization', () => {
   });
 
   it('enqueues when user_confirmed is provided', async () => {
-    const mod = await import('@/lib/youtube-upload?auth-test=2');
+    const mod = await import('@/lib/youtube-upload');
     const draft = mod.preparePackage({
       title: 'demo',
       description: '',
