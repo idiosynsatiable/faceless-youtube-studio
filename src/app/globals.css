@@ -1,0 +1,30 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+html, body {
+  background: theme('colors.ink.950');
+  color: theme('colors.ink.50');
+}
+
+a { color: inherit; }
+
+.card {
+  @apply rounded-2xl border border-ink-800 bg-ink-900/70 p-6 shadow-sm;
+}
+
+.btn-primary {
+  @apply inline-flex items-center justify-center rounded-xl bg-signal-500 px-5 py-3 text-sm font-semibold text-ink-950 transition hover:bg-signal-400;
+}
+
+.btn-secondary {
+  @apply inline-flex items-center justify-center rounded-xl border border-ink-700 px-5 py-3 text-sm font-semibold text-ink-100 transition hover:border-signal-500;
+}
+
+.tag {
+  @apply inline-flex items-center rounded-full border border-ink-700 px-2.5 py-1 text-xs font-medium text-ink-200;
+}

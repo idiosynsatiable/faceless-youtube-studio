@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+      - name: Install
+        run: npm install --no-audit --no-fund
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Test
+        run: npm test
+      - name: Scan secrets
+        run: bash scripts/scan-secrets.sh
+      - name: Scan placeholders
+        run: bash scripts/scan-placeholders.sh
+      - name: Build
+        run: npm run build
+        env:
+          DATABASE_URL: postgresql://faceless:faceless@localhost:5432/faceless_studio
+          JWT_SECRET: ci_local_secret
+          NEXT_PUBLIC_APP_URL: http://localhost:3000

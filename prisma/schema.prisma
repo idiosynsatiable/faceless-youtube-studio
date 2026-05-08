@@ -1,0 +1,314 @@
+// Faceless YouTube Studio — Prisma schema
+// Production-grade. No fake-engagement fields. No hidden telemetry.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id               String   @id @default(cuid())
+  email            String   @unique
+  passwordHash     String
+  subscriptionTier String   @default("free")
+  stripeCustomerId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  channels         Channel[]
+  trendTopics      TrendTopic[]
+  videoIdeas       VideoIdea[]
+  videoProjects    VideoProject[]
+  uploadJobs       UploadJob[]
+  analytics        AnalyticsSnapshot[]
+  exports          ExportFile[]
+  complianceIssues ComplianceIssue[]
+  usageEvents      UsageEvent[]
+  shortsProjects   ShortsProject[]
+  shortsCalendar   ShortsCalendarItem[]
+  shortsAnalytics  ShortsAnalyticsSnapshot[]
+  shortsFunnels    ShortsFunnel[]
+}
+
+model Channel {
+  id               String   @id @default(cuid())
+  userId           String
+  youtubeChannelId String?
+  name             String
+  niche            String
+  regionFocus      String
+  language         String
+  oauthConnected   Boolean  @default(false)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  user             User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoIdeas       VideoIdea[]
+  videoProjects    VideoProject[]
+  analytics        AnalyticsSnapshot[]
+  shortsProjects   ShortsProject[]
+  shortsCalendar   ShortsCalendarItem[]
+  shortsAnalytics  ShortsAnalyticsSnapshot[]
+
+  @@index([userId])
+}
+
+model TrendTopic {
+  id                     String   @id @default(cuid())
+  userId                 String
+  topic                  String
+  region                 String
+  language               String
+  source                 String
+  trendScore             Int
+  monetizationScore      Int
+  competitionScore       Int
+  advertiserSafetyScore  Int
+  createdAt              DateTime @default(now())
+
+  user      User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoIdeas VideoIdea[]
+
+  @@index([userId])
+}
+
+model VideoIdea {
+  id                String   @id @default(cuid())
+  userId            String
+  channelId         String?
+  topicId           String?
+  title             String
+  hook              String
+  audience          String
+  format            String
+  score             Int
+  monetizationAngle String
+  status            String   @default("queued")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user      User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel   Channel?     @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  topic     TrendTopic?  @relation(fields: [topicId], references: [id], onDelete: SetNull)
+  projects  VideoProject[]
+
+  @@index([userId])
+  @@index([channelId])
+  @@index([topicId])
+}
+
+model VideoProject {
+  id                String   @id @default(cuid())
+  userId            String
+  channelId         String?
+  ideaId            String?
+  title             String
+  scriptJson        Json
+  storyboardJson    Json
+  metadataJson      Json
+  complianceJson    Json
+  monetizationJson  Json
+  readinessScore    Int      @default(0)
+  uploadStatus      String   @default("draft_ready")
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  user             User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel          Channel?          @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  idea             VideoIdea?        @relation(fields: [ideaId], references: [id], onDelete: SetNull)
+  uploadJobs       UploadJob[]
+  analytics        AnalyticsSnapshot[]
+  exports          ExportFile[]
+  complianceIssues ComplianceIssue[]
+  shortsProjects   ShortsProject[]
+  shortsFunnels    ShortsFunnel[]    @relation(name: "long_form_to_funnel")
+
+  @@index([userId])
+  @@index([channelId])
+  @@index([ideaId])
+}
+
+model UploadJob {
+  id              String    @id @default(cuid())
+  userId          String
+  videoProjectId  String
+  youtubeVideoId  String?
+  privacyStatus   String    @default("private")
+  scheduledAt     DateTime?
+  status          String    @default("draft_ready")
+  errorMessage    String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoProject VideoProject @relation(fields: [videoProjectId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([videoProjectId])
+}
+
+model AnalyticsSnapshot {
+  id                  String   @id @default(cuid())
+  userId              String
+  channelId           String
+  videoProjectId      String?
+  impressions         Int      @default(0)
+  views               Int      @default(0)
+  clickThroughRate    Float    @default(0)
+  averageViewDuration Float    @default(0)
+  likes               Int      @default(0)
+  comments            Int      @default(0)
+  subscribersGained   Int      @default(0)
+  estimatedRevenue    Float    @default(0)
+  createdAt           DateTime @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel     Channel      @relation(fields: [channelId], references: [id], onDelete: Cascade)
+  videoProject VideoProject? @relation(fields: [videoProjectId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([channelId])
+  @@index([videoProjectId])
+}
+
+model ExportFile {
+  id              String   @id @default(cuid())
+  userId          String
+  videoProjectId  String
+  type            String
+  filename        String
+  fileContent     String   @db.Text
+  createdAt       DateTime @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoProject VideoProject @relation(fields: [videoProjectId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([videoProjectId])
+}
+
+model ComplianceIssue {
+  id              String   @id @default(cuid())
+  userId          String
+  videoProjectId  String
+  severity        String
+  category        String
+  message         String
+  suggestedFix    String
+  createdAt       DateTime @default(now())
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  videoProject VideoProject @relation(fields: [videoProjectId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([videoProjectId])
+}
+
+model UsageEvent {
+  id        String   @id @default(cuid())
+  userId    String
+  eventType String
+  units     Int      @default(1)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([eventType])
+}
+
+model ShortsProject {
+  id                  String   @id @default(cuid())
+  userId              String
+  channelId           String?
+  videoProjectId      String?
+  title               String
+  hook                String
+  scriptJson          Json
+  visualPlanJson      Json
+  metadataJson        Json
+  retentionScore      Int      @default(0)
+  uploadPriorityScore Int      @default(0)
+  status              String   @default("draft_ready")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  user         User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel      Channel?                  @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  videoProject VideoProject?             @relation(fields: [videoProjectId], references: [id], onDelete: SetNull)
+  calendar     ShortsCalendarItem[]
+  analytics    ShortsAnalyticsSnapshot[]
+  funnels      ShortsFunnel[]
+
+  @@index([userId])
+  @@index([channelId])
+  @@index([videoProjectId])
+}
+
+model ShortsCalendarItem {
+  id              String   @id @default(cuid())
+  userId          String
+  channelId       String?
+  shortsProjectId String?
+  scheduledFor    DateTime
+  status          String   @default("scheduled")
+  topicCluster    String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel       Channel?       @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  shortsProject ShortsProject? @relation(fields: [shortsProjectId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([channelId])
+  @@index([shortsProjectId])
+}
+
+model ShortsAnalyticsSnapshot {
+  id                       String   @id @default(cuid())
+  userId                   String
+  channelId                String?
+  shortsProjectId          String?
+  views                    Int      @default(0)
+  averageViewDurationSeconds Float  @default(0)
+  viewedVsSwipedRate       Float    @default(0)
+  likes                    Int      @default(0)
+  comments                 Int      @default(0)
+  shares                   Int      @default(0)
+  subscribersGained        Int      @default(0)
+  longFormClicks           Int      @default(0)
+  createdAt                DateTime @default(now())
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  channel       Channel?       @relation(fields: [channelId], references: [id], onDelete: SetNull)
+  shortsProject ShortsProject? @relation(fields: [shortsProjectId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([channelId])
+  @@index([shortsProjectId])
+}
+
+model ShortsFunnel {
+  id                       String   @id @default(cuid())
+  userId                   String
+  shortsProjectId          String
+  relatedLongFormProjectId String?
+  ctaType                  String
+  pinnedComment            String
+  descriptionCta           String
+  playlistTarget           String?
+  createdAt                DateTime @default(now())
+
+  user                User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  shortsProject       ShortsProject @relation(fields: [shortsProjectId], references: [id], onDelete: Cascade)
+  relatedLongFormProject VideoProject? @relation(name: "long_form_to_funnel", fields: [relatedLongFormProjectId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([shortsProjectId])
+  @@index([relatedLongFormProjectId])
+}
