@@ -6,6 +6,15 @@ Faceless YouTube Studio is an AI-assisted market intelligence and faceless video
 
 The product never uses fake engagement, bot traffic, fake subscribers, fake likes, comment spam, view manipulation, stolen copyrighted content, misleading metadata, harmful misinformation, or deceptive monetization tactics.
 
+## Quick links
+
+- **Up & running in 60–90 minutes**: [`LAUNCH_CHECKLIST.md`](./LAUNCH_CHECKLIST.md)
+- **Vercel deployment runbook**: [`docs/VERCEL_DEPLOY.md`](./docs/VERCEL_DEPLOY.md)
+- **FFmpeg + upload worker**: [`docs/FFMPEG_WORKER.md`](./docs/FFMPEG_WORKER.md)
+- **Acceptance checklist**: [`FINAL_VERIFICATION_REPORT.md`](./FINAL_VERIFICATION_REPORT.md)
+- **Changelog**: [`CHANGELOG.md`](./CHANGELOG.md)
+- **Vulnerability disclosure**: [`SECURITY.md`](./SECURITY.md)
+
 ## Product overview
 
 - 23 production-grade modules covering the full pipeline from trend to monetization, including a first-class YouTube Shorts engine
