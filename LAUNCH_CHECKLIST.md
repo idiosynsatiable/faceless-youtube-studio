@@ -32,15 +32,15 @@ Pick one provider and grab a **pooled connection string**:
 - **Neon** (https://neon.tech) — create a project, copy the pooled connection string, append `?sslmode=require&pgbouncer=true&connect_timeout=15`.
 - **Supabase** (https://supabase.com) — **Settings → Database → Connection string → Transaction (pooler)**.
 
-Then apply the schema from your laptop:
+Then apply the schema from your laptop. The init migration is already committed at `prisma/migrations/20260508000000_init/migration.sql`, so you can apply it directly with `migrate deploy` — no `migrate dev` step required:
 
 ```bash
 DATABASE_URL='<paste here>' npx prisma generate
-DATABASE_URL='<paste here>' npx prisma migrate dev --name init
+DATABASE_URL='<paste here>' npx prisma migrate deploy
 DATABASE_URL='<paste here>' npm run prisma:seed   # optional demo channel
 ```
 
-`prisma migrate dev` creates the migration files in `prisma/migrations/` and applies them. Commit those new files. After this initial migration, future deployments use `npx prisma migrate deploy` (no schema diff prompts).
+The init migration was hand-crafted to match `prisma/schema.prisma` exactly (14 tables, 20 indexes, 30 foreign keys). If you ever introduce schema changes, run `npx prisma migrate dev --name <change>` from a development branch and commit the new migration directory alongside the schema change.
 
 ---
 
