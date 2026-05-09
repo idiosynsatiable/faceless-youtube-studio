@@ -104,8 +104,16 @@ Returns `{ ok: true, package: UploadPackage }`.
 ## POST /api/uploads/publish
 
 Body: `{ videoProjectId, authorization: 'user_confirmed', privacyStatus, scheduledAt? }`.
-Returns 401 if authorization is missing. Returns 503 if YouTube OAuth is disabled.
-On success: `{ ok: true, status, package }`.
+
+Status codes:
+
+- `401 authorization_required` — missing or non-`user_confirmed` authorization. The route never publishes without explicit authorization.
+- `503 integration_disabled` — `YOUTUBE_CLIENT_ID` / `YOUTUBE_CLIENT_SECRET` not set.
+- `503 queue_disabled` — authorization confirmed and YouTube configured, but no `QueueProducer` is wired up. See `docs/FFMPEG_WORKER.md` → QueueProducer contract.
+- `502 enqueue_failed` — the producer threw a non-disabled error (e.g., Redis is unreachable).
+- `202 Accepted` — the upload was enqueued for the worker. Body: `{ ok: true, status, package, job: { id, queueKey, enqueuedAt } }`.
+
+The route NEVER returns 200 from an actual publish — the upload itself is performed by the worker after consuming the job from the queue.
 
 ## POST /api/billing/checkout
 

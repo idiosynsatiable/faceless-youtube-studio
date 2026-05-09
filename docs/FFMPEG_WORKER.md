@@ -74,7 +74,73 @@ docker run --rm \
 
 The worker reads `WORKER_OUTPUT_ROOT`, `WORKER_INPUT_ALLOWLIST` (comma-separated absolute prefixes), `FFMPEG_BINARY`, `WORKER_CONCURRENCY`, and `WORKER_JOB_TIMEOUT_MS` from env. All of those have sensible defaults baked into the Dockerfile.
 
-## QueueAdapter contract
+## QueueProducer contract (API → queue)
+
+The `/api/uploads/publish` route enqueues an `UploadJobRequest` after validating the user's `authorization=user_confirmed` flag. Implement the `QueueProducer` interface defined in `src/lib/queue-producer.ts`:
+
+```ts
+export interface UploadJobRequest {
+  id: string;
+  videoProjectId: string;
+  userId?: string;
+  privacyStatus: 'private' | 'unlisted' | 'public';
+  scheduledAt?: string;
+  enqueuedAt: string;
+  authorization: 'user_confirmed';
+}
+
+export interface QueueProducer {
+  enqueue(request: UploadJobRequest): Promise<{ enqueued: true; queueKey?: string }>;
+  close(): Promise<void>;
+}
+```
+
+Default behaviour:
+
+- The shipped `disabledQueueProducer()` throws `QueueDisabledError` from `enqueue()`. The route catches this and returns `503 queue_disabled`.
+- Operators replace it at deploy time by calling `setQueueProducer(yourProducer)` from a small bootstrap module loaded before the route handles its first request (e.g., from `instrumentation.ts` in Next.js, or from an explicit import in a custom server entry).
+
+A real producer using the `redis` npm package looks like:
+
+```ts
+// src/queue/redis-producer.ts (operator-owned, NOT shipped)
+import { createClient, type RedisClientType } from 'redis';
+import type { QueueProducer, UploadJobRequest } from '@/lib/queue-producer';
+
+const QUEUE_KEY = 'faceless:jobs:upload';
+
+export function redisQueueProducer(url: string): QueueProducer {
+  const client: RedisClientType = createClient({ url });
+  client.on('error', (err) => console.error('redis producer', err));
+  const ready = client.connect();
+  return {
+    async enqueue(request: UploadJobRequest) {
+      await ready;
+      await client.rPush(QUEUE_KEY, JSON.stringify(request));
+      return { enqueued: true, queueKey: QUEUE_KEY };
+    },
+    async close() {
+      await client.quit();
+    }
+  };
+}
+```
+
+```ts
+// instrumentation.ts (Next.js entry point)
+import { setQueueProducer } from '@/lib/queue-producer';
+import { redisQueueProducer } from '@/queue/redis-producer';
+
+export function register() {
+  if (process.env.REDIS_URL) {
+    setQueueProducer(redisQueueProducer(process.env.REDIS_URL));
+  }
+}
+```
+
+The route returns `202 Accepted` with `{ ok: true, job: { id, queueKey, enqueuedAt } }` on a successful enqueue. The worker picks the request up via the `QueueAdapter` (consumer side, see below).
+
+## QueueAdapter contract (queue → worker)
 
 We do not bundle a Redis client because the operator chooses their stack (`redis`, `ioredis`, Upstash REST). Implement the four methods on `QueueAdapter`:
 
