@@ -6,6 +6,12 @@ Faceless YouTube Studio is an AI-assisted market intelligence and faceless video
 
 The product never uses fake engagement, bot traffic, fake subscribers, fake likes, comment spam, view manipulation, stolen copyrighted content, misleading metadata, harmful misinformation, or deceptive monetization tactics.
 
+## Deploy with Vercel
+
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https%3A%2F%2Fgithub.com%2Fidiosynsatiable%2Ffaceless-youtube-studio&env=DATABASE_URL,JWT_SECRET,NEXT_PUBLIC_APP_URL&envDescription=DATABASE_URL%20%3D%20pooled%20Postgres%20URL%20%28Neon%20%2F%20Vercel%20Postgres%20%2F%20Supabase%29.%20JWT_SECRET%20%3D%20generate%20with%20%60openssl%20rand%20-base64%2048%60.%20NEXT_PUBLIC_APP_URL%20%3D%20the%20final%20Vercel%20URL%20or%20your%20custom%20domain.&envLink=https%3A%2F%2Fgithub.com%2Fidiosynsatiable%2Ffaceless-youtube-studio%2Fblob%2Fmain%2FLAUNCH_CHECKLIST.md&project-name=faceless-youtube-studio&repository-name=faceless-youtube-studio)
+
+The button opens Vercel's import flow pre-filled for this repo. The three required env vars are prompted in the form. After the first deploy, add the optional integration env vars (`STRIPE_*`, `YOUTUBE_*`, `REDIS_URL`, `OPENAI_API_KEY`) per `LAUNCH_CHECKLIST.md`. The app boots in disabled-safe mode until each integration is configured.
+
 ## Quick links
 
 - **Up & running in 60–90 minutes**: [`LAUNCH_CHECKLIST.md`](./LAUNCH_CHECKLIST.md)

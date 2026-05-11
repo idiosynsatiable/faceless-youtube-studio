@@ -25,6 +25,7 @@
     "src/**/*.tsx",
     "tests/**/*.ts",
     "prisma/seed.ts",
+    "instrumentation.ts",
     ".next/types/**/*.ts"
   ],
   "exclude": ["node_modules"]

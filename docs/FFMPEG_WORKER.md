@@ -98,7 +98,8 @@ export interface QueueProducer {
 Default behaviour:
 
 - The shipped `disabledQueueProducer()` throws `QueueDisabledError` from `enqueue()`. The route catches this and returns `503 queue_disabled`.
-- Operators replace it at deploy time by calling `setQueueProducer(yourProducer)` from a small bootstrap module loaded before the route handles its first request (e.g., from `instrumentation.ts` in Next.js, or from an explicit import in a custom server entry).
+- A ready-to-use Redis-backed producer ships at `src/queue/redis-bootstrap.ts`. The committed `instrumentation.ts` at the repo root calls it from Next.js's `register()` hook when `REDIS_URL` is set, so wiring is automatic for Vercel + Upstash / Railway / Fly. No manual bootstrap module is required.
+- If you want to wire a different producer (different queue backend, different serialization), call `setQueueProducer(yourProducer)` from your own bootstrap module before the route handles its first request.
 
 A real producer using the `redis` npm package looks like:
 
