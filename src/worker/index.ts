@@ -1,14 +1,20 @@
 // Worker entry point. Run via `npm run worker`. Reads config from env, opens
-// the queue adapter, processes jobs sequentially up to `concurrency`, and
-// shuts down gracefully on SIGTERM / SIGINT.
+// the queue adapter, processes UploadJobRequest records sequentially:
 //
-// The queue adapter is wired in by the operator. By default we throw a clear
-// error pointing at docs/FFMPEG_WORKER.md so the failure mode is loud.
+//   pop request → hydrate → run FFmpeg assembly → upload to YouTube → ack
+//
+// Shuts down gracefully on SIGTERM / SIGINT. The queue adapter is wired in
+// by the operator (Redis is the recommended backend; see docs/FFMPEG_WORKER.md).
 
 import path from 'node:path';
+import { getPrisma } from '@/lib/db';
+import { decryptSecret } from '@/lib/crypto-vault';
+import type { UploadJobRequest } from '@/lib/queue-producer';
 import { runAssemblyJob } from './job-runner';
+import { hydrateUploadRequest } from './job-hydrator';
+import { uploadVideoToYouTube } from './youtube-uploader';
 import { unsupportedRedisAdapter, type QueueAdapter } from './queue';
-import type { WorkerConfig } from './types';
+import type { JobOutcome, WorkerConfig } from './types';
 
 function readEnv(name: string, fallback?: string): string {
   const v = process.env[name];
@@ -42,6 +48,136 @@ export interface WorkerLoopOptions {
   log?: (message: string) => void;
 }
 
+async function processOne(
+  request: UploadJobRequest,
+  config: WorkerConfig,
+  log: (m: string) => void
+): Promise<JobOutcome> {
+  const prisma = getPrisma();
+  if (!prisma) {
+    return {
+      jobId: request.id,
+      status: 'failed',
+      outputs: [],
+      log: ['prisma client unavailable'],
+      errorMessage: 'database unavailable in worker',
+      errorCategory: 'unknown'
+    };
+  }
+
+  // Step 1: hydrate the request into a full AssemblyJob.
+  const hydration = await hydrateUploadRequest(request, { prisma, config });
+  if (!hydration.ok) {
+    log(`hydration failed: ${hydration.reason}`);
+    return {
+      jobId: request.id,
+      status: 'rejected',
+      outputs: [],
+      log: [`hydration failed: ${hydration.reason}`],
+      errorMessage: `hydration failed: ${hydration.reason}`,
+      errorCategory: 'invalid_input_path'
+    };
+  }
+
+  // Step 2: run FFmpeg assembly.
+  const assemblyOutcome = await runAssemblyJob(hydration.job, { config });
+  if (assemblyOutcome.status !== 'completed') {
+    return assemblyOutcome;
+  }
+
+  // Step 3: pick the master export and upload it to YouTube.
+  const master = assemblyOutcome.outputs.find((o) => o.profile === 'YouTube long-form 16:9');
+  if (!master) {
+    log(`no master export produced; outputs=${assemblyOutcome.outputs.map((o) => o.profile).join(',')}`);
+    return assemblyOutcome;
+  }
+
+  const project = await prisma.videoProject.findUnique({ where: { id: request.videoProjectId } });
+  const channel = project?.channelId
+    ? await prisma.channel.findUnique({ where: { id: project.channelId } })
+    : null;
+  if (!channel || !channel.oauthConnected || !channel.oauthRefreshTokenCipher) {
+    log('channel missing or not OAuth-connected; skipping YouTube upload');
+    return {
+      ...assemblyOutcome,
+      log: [...assemblyOutcome.log, 'youtube upload skipped: channel not connected']
+    };
+  }
+  let refreshToken: string;
+  try {
+    refreshToken = decryptSecret({
+      cipher: channel.oauthRefreshTokenCipher,
+      iv: channel.oauthRefreshTokenIv ?? '',
+      authTag: channel.oauthRefreshTokenAuthTag ?? ''
+    });
+  } catch (err) {
+    return {
+      ...assemblyOutcome,
+      status: 'failed',
+      errorMessage: 'refresh token decryption failed; re-OAuth the channel',
+      errorCategory: 'unknown',
+      log: [...assemblyOutcome.log, err instanceof Error ? err.message : 'decrypt error']
+    };
+  }
+
+  const metadataJson = project?.metadataJson as
+    | { title?: string; description?: string; tags?: string[]; categoryRecommendation?: string }
+    | null;
+
+  const upload = await uploadVideoToYouTube({
+    filePath: master.absolutePath,
+    refreshToken,
+    title: metadataJson?.title ?? project?.title ?? 'untitled',
+    description: metadataJson?.description ?? '',
+    tags: metadataJson?.tags ?? [],
+    categoryId: (metadataJson?.categoryRecommendation ?? '27').split(' ')[0],
+    privacyStatus: request.privacyStatus,
+    scheduledAt: request.scheduledAt
+  });
+
+  if (!upload.ok) {
+    log(`youtube upload failed: ${upload.reason} ${upload.detail}`);
+    return {
+      ...assemblyOutcome,
+      status: 'failed',
+      errorMessage: `youtube upload failed: ${upload.reason}`,
+      errorCategory: 'unknown',
+      log: [...assemblyOutcome.log, `youtube upload: ${upload.reason} ${upload.detail}`]
+    };
+  }
+
+  // Step 4: persist the YouTube video ID and the new upload status.
+  try {
+    await prisma.uploadJob.upsert({
+      where: { id: request.id },
+      update: {
+        youtubeVideoId: upload.videoId,
+        privacyStatus: request.privacyStatus,
+        scheduledAt: request.scheduledAt ? new Date(request.scheduledAt) : null,
+        status: upload.status === 'scheduled' ? 'scheduled' : 'private_uploaded',
+        errorMessage: null
+      },
+      create: {
+        id: request.id,
+        userId: project?.userId ?? '',
+        videoProjectId: request.videoProjectId,
+        youtubeVideoId: upload.videoId,
+        privacyStatus: request.privacyStatus,
+        scheduledAt: request.scheduledAt ? new Date(request.scheduledAt) : null,
+        status: upload.status === 'scheduled' ? 'scheduled' : 'private_uploaded'
+      }
+    });
+  } catch (err) {
+    log(`uploadJob persist failed: ${err instanceof Error ? err.message : 'unknown'}`);
+  }
+
+  log(`youtube upload ok: ${upload.videoId} (${upload.status})`);
+  return {
+    ...assemblyOutcome,
+    log: [...assemblyOutcome.log, `youtube ${upload.status}: ${upload.videoId}`]
+  };
+}
+
 export async function runWorkerLoop(options: WorkerLoopOptions = {}): Promise<void> {
   const config = options.config ?? loadWorkerConfig();
   const adapter = options.adapter ?? unsupportedRedisAdapter();
@@ -49,25 +185,25 @@ export async function runWorkerLoop(options: WorkerLoopOptions = {}): Promise<vo
   const signal = options.shutdownSignal ?? { aborted: false };
   log(`worker starting concurrency=${config.concurrency} outputs=${config.outputsRoot}`);
   while (!signal.aborted) {
-    const job = await adapter.pop(5000);
-    if (!job) continue;
-    log(`picked job ${job.id} (project ${job.scope.projectId})`);
+    const request = await adapter.pop(5000);
+    if (!request) continue;
+    log(`picked request ${request.id} (project ${request.videoProjectId})`);
     try {
-      const outcome = await runAssemblyJob(job, { config });
+      const outcome = await processOne(request, config, log);
       if (outcome.status === 'completed') {
         await adapter.ack(outcome);
-        log(`job ${job.id} completed with ${outcome.outputs.length} output(s)`);
+        log(`request ${request.id} completed with ${outcome.outputs.length} output(s)`);
       } else if (outcome.status === 'rejected') {
-        await adapter.nack(job.id, outcome.errorMessage ?? 'rejected', false);
-        log(`job ${job.id} rejected: ${outcome.errorMessage}`);
+        await adapter.nack(request.id, outcome.errorMessage ?? 'rejected', false);
+        log(`request ${request.id} rejected: ${outcome.errorMessage}`);
       } else {
-        await adapter.nack(job.id, outcome.errorMessage ?? 'failed', true);
-        log(`job ${job.id} failed: ${outcome.errorMessage}`);
+        await adapter.nack(request.id, outcome.errorMessage ?? 'failed', true);
+        log(`request ${request.id} failed: ${outcome.errorMessage}`);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await adapter.nack(job.id, message, true);
-      log(`job ${job.id} threw: ${message}`);
+      await adapter.nack(request.id, message, true);
+      log(`request ${request.id} threw: ${message}`);
     }
   }
   await adapter.close();

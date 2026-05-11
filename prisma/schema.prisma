@@ -43,6 +43,11 @@ model Channel {
   regionFocus      String
   language         String
   oauthConnected   Boolean  @default(false)
+  oauthRefreshTokenCipher  String?
+  oauthRefreshTokenIv      String?
+  oauthRefreshTokenAuthTag String?
+  oauthScope               String?
+  oauthTokenUpdatedAt      DateTime?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 

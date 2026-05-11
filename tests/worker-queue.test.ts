@@ -1,20 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { InMemoryQueueAdapter, unsupportedRedisAdapter } from '@/worker/queue';
-import type { AssemblyJob } from '@/worker/types';
-import { planVideoAssembly } from '@/lib/video-assembler';
+import type { UploadJobRequest } from '@/lib/queue-producer';
 
-const job: AssemblyJob = {
-  id: 'job-1',
-  scope: { userId: 'user1', projectId: 'proj1', baseFilename: 'demo' },
-  plan: planVideoAssembly({
-    title: 'demo',
-    durationMinutes: 6,
-    shortsCount: 1,
-    storyboardScenes: 4,
-    style: 'cinematic-clean'
-  }),
-  inputs: [{ path: '/srv/inputs/u1/p1/scene1.mp4', role: 'broll', license: 'creator-owned' }],
-  enqueuedAt: new Date().toISOString()
+const request: UploadJobRequest = {
+  id: 'req-1',
+  videoProjectId: 'proj-1',
+  privacyStatus: 'private',
+  enqueuedAt: new Date().toISOString(),
+  authorization: 'user_confirmed'
 };
 
 describe('worker queue adapter', () => {
@@ -23,10 +16,10 @@ describe('worker queue adapter', () => {
     expect(await q.pop()).toBeNull();
   });
 
-  it('in-memory adapter returns enqueued jobs in order, then null', async () => {
+  it('in-memory adapter returns enqueued requests in order, then null', async () => {
     const q = new InMemoryQueueAdapter();
-    q.enqueue({ ...job, id: 'a' });
-    q.enqueue({ ...job, id: 'b' });
+    q.enqueue({ ...request, id: 'a' });
+    q.enqueue({ ...request, id: 'b' });
     expect((await q.pop())?.id).toBe('a');
     expect((await q.pop())?.id).toBe('b');
     expect(await q.pop()).toBeNull();
