@@ -3,28 +3,162 @@
 @tailwind utilities;
 
 :root {
-  color-scheme: dark;
+  color-scheme: light;
+  --paper: #fffdf7;
+  --paper-deep: #f7efdF;
+  --ink: #173321;
+  --ink-muted: #657162;
+  --gold: #bd8732;
+  --gold-deep: #80531c;
+  --gold-soft: #ead39e;
+  --green: #278b3e;
+  --green-deep: #176b32;
+  --line: rgba(128, 83, 28, 0.22);
 }
 
-html, body {
-  background: theme('colors.ink.950');
-  color: theme('colors.ink.50');
+* { border-color: var(--line); }
+
+html { scroll-behavior: smooth; }
+
+body {
+  min-width: 320px;
+  overflow-x: hidden;
+  background:
+    radial-gradient(circle at 14% -8%, rgba(255, 255, 255, 0.95) 0 12%, transparent 34%),
+    radial-gradient(circle at 92% 4%, rgba(230, 200, 121, 0.26) 0 7%, transparent 25%),
+    linear-gradient(120deg, #fffdf7 0%, #f7efe1 48%, #fffaf0 100%);
+  color: var(--ink);
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  text-rendering: optimizeLegibility;
 }
 
+body::before {
+  position: fixed;
+  z-index: -1;
+  inset: 0;
+  pointer-events: none;
+  content: '';
+  opacity: 0.55;
+  background-image:
+    linear-gradient(90deg, rgba(128, 83, 28, 0.025) 1px, transparent 1px),
+    linear-gradient(rgba(128, 83, 28, 0.02) 1px, transparent 1px);
+  background-size: 34px 34px;
+  mask-image: linear-gradient(to bottom, black, transparent 72%);
+}
+
+::selection { background: #bcefb4; color: #12301c; }
 a { color: inherit; }
+button, input, select, textarea { font: inherit; }
 
-.card {
-  @apply rounded-2xl border border-ink-800 bg-ink-900/70 p-6 shadow-sm;
+@layer components {
+  .app-frame {
+    @apply mx-auto flex min-h-screen w-full max-w-[1600px] flex-col px-4 py-4 sm:px-6 lg:px-8 lg:py-7;
+  }
+
+  .gilt-rule {
+    height: 1px;
+    width: 100%;
+    background: linear-gradient(90deg, transparent, rgba(189, 135, 50, 0.65), transparent);
+  }
+
+  .eyebrow {
+    @apply inline-flex items-center gap-2 text-[10px] font-bold uppercase tracking-[0.22em] text-accent-600;
+  }
+
+  .eyebrow::before {
+    content: '✦';
+    @apply text-signal-500;
+  }
+
+  .card {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(128, 83, 28, 0.22);
+    border-radius: 1.25rem;
+    background: linear-gradient(145deg, rgba(255, 255, 255, 0.92), rgba(249, 242, 228, 0.82));
+    padding: 1.5rem;
+    box-shadow: 0 18px 45px rgba(67, 50, 22, 0.10), inset 0 1px 0 rgba(255, 255, 255, 0.92);
+  }
+
+  .card::after {
+    position: absolute;
+    inset: 0.55rem;
+    pointer-events: none;
+    content: '';
+    border: 1px solid rgba(189, 135, 50, 0.12);
+    border-radius: 0.9rem;
+  }
+
+  .card > * { position: relative; z-index: 1; }
+
+  .card-dark {
+    position: relative;
+    overflow: hidden;
+    border: 1px solid rgba(189, 135, 50, 0.46);
+    border-radius: 1.5rem;
+    background:
+      radial-gradient(circle at 86% 18%, rgba(98, 214, 83, 0.18), transparent 25%),
+      radial-gradient(circle at 12% 100%, rgba(189, 135, 50, 0.26), transparent 32%),
+      linear-gradient(135deg, #14331e 0%, #173321 52%, #0d2415 100%);
+    color: #fffdf7;
+    box-shadow: 0 20px 54px rgba(23, 51, 33, 0.22), inset 0 1px 0 rgba(255, 255, 255, 0.12);
+  }
+
+  .card-dark::before {
+    position: absolute;
+    inset: 0.7rem;
+    pointer-events: none;
+    content: '';
+    border: 1px solid rgba(230, 200, 121, 0.32);
+    border-radius: 1.05rem;
+  }
+
+  .card-dark > * { position: relative; z-index: 1; }
+
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-signal-600 bg-signal-500 px-5 py-3 text-sm font-bold text-porcelain-50 shadow-uranium transition duration-200 hover:-translate-y-0.5 hover:bg-signal-600 hover:shadow-lg focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-signal-500;
+  }
+
+  .btn-secondary {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl border border-accent-500/70 bg-white/70 px-5 py-3 text-sm font-bold text-accent-600 shadow-sm transition duration-200 hover:-translate-y-0.5 hover:border-accent-600 hover:bg-porcelain-100 hover:shadow-gilt focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent-500;
+  }
+
+  .tag {
+    @apply inline-flex items-center gap-1.5 rounded-full border border-accent-500/35 bg-porcelain-50/80 px-2.5 py-1 text-xs font-semibold text-ink-100 shadow-sm transition hover:border-signal-500 hover:text-signal-600;
+  }
+
+  .metric {
+    @apply rounded-xl border border-accent-500/20 bg-white/60 px-4 py-3 shadow-sm;
+  }
+
+  .field-label {
+    @apply mb-2 block text-[10px] font-bold uppercase tracking-[0.16em] text-accent-600;
+  }
+
+  .page-title {
+    @apply mt-2 font-display text-4xl font-bold tracking-tight text-ink-50 sm:text-5xl;
+  }
+
+  .page-description {
+    @apply mt-3 max-w-3xl text-sm leading-6 text-ink-300 sm:text-base;
+  }
 }
 
-.btn-primary {
-  @apply inline-flex items-center justify-center rounded-xl bg-signal-500 px-5 py-3 text-sm font-semibold text-ink-950 transition hover:bg-signal-400;
+input:not([type='file']), select, textarea {
+  border: 1px solid rgba(128, 83, 28, 0.28);
+  border-radius: 0.75rem;
+  background: rgba(255, 253, 247, 0.85);
+  color: var(--ink);
+  box-shadow: inset 0 1px 2px rgba(67, 50, 22, 0.04);
 }
 
-.btn-secondary {
-  @apply inline-flex items-center justify-center rounded-xl border border-ink-700 px-5 py-3 text-sm font-semibold text-ink-100 transition hover:border-signal-500;
+input:not([type='file']):focus, select:focus, textarea:focus {
+  border-color: var(--green);
+  outline: 2px solid rgba(98, 214, 83, 0.28);
+  outline-offset: 2px;
 }
 
-.tag {
-  @apply inline-flex items-center rounded-full border border-ink-700 px-2.5 py-1 text-xs font-medium text-ink-200;
+@media (max-width: 640px) {
+  .card { padding: 1.15rem; }
+  .page-title { font-size: 2.25rem; }
 }

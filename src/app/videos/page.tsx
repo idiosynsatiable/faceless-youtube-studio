@@ -4,11 +4,18 @@ import RenderHistory from '@/components/RenderHistory';
 export default function VideosPage() {
   return (
     <AppShell>
-      <div>
-        <p className="text-xs uppercase tracking-[0.24em] text-signal-500">Library</p>
-        <h1 className="mt-2 text-3xl font-semibold">Rendered videos</h1>
-        <p className="mt-2 text-sm text-ink-300">Completed jobs from this browser, with direct download links to the worker export volume.</p>
-      </div>
+      <section className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px] xl:items-end">
+        <div>
+          <p className="eyebrow">Export library</p>
+          <h1 className="page-title">Rendered Releases</h1>
+          <p className="page-description">A private catalogue of completed renders from this browser, each kept close to its source project and ready for secure download from the worker export volume.</p>
+        </div>
+        <aside className="metric">
+          <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-accent-600">Library standard</p>
+          <p className="mt-2 font-display text-2xl font-bold text-ink-50">Traceable exports.</p>
+          <p className="mt-2 text-xs leading-5 text-ink-300">Only completed, recorded artifacts are available for retrieval—never arbitrary filesystem paths.</p>
+        </aside>
+      </section>
       <RenderHistory />
     </AppShell>
   );

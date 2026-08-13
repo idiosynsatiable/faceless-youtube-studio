@@ -1,12 +1,16 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Faceless YouTube Studio',
+  title: 'Faceless Studio — Creator Command Center',
   description:
-    'Turn rising trends into monetizable faceless video systems. Market intelligence, faceless video production, compliance, upload preparation, and monetization for YouTube creators.',
-  manifest: '/manifest.webmanifest',
-  themeColor: '#080a18'
+    'A refined creator command center for turning market intelligence into compliant, monetizable faceless YouTube video systems.',
+  manifest: '/manifest.webmanifest'
+};
+
+export const viewport: Viewport = {
+  themeColor: '#fffdf7',
+  colorScheme: 'light'
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
