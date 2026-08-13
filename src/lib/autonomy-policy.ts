@@ -48,22 +48,12 @@ export interface OpportunityEvaluation {
   };
 }
 
-const POLITICAL_TERMS = [
-  'election', 'candidate', 'campaign', 'vote', 'voting', 'ballot', 'political party',
-  'democrat', 'republican', 'conservative party', 'labour party', 'referendum'
-];
-
 function clamp(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
 }
 
 export function normalizeTopic(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim().replace(/\s+/g, ' ');
-}
-
-export function isPoliticalPersuasionTopic(value: string): boolean {
-  const normalized = normalizeTopic(value);
-  return POLITICAL_TERMS.some((term) => normalized.includes(term));
 }
 
 export function uniqueHttpSources(urls: string[]): string[] {
@@ -99,7 +89,6 @@ export function evaluateOpportunity(
     components.novelty * 0.10 + components.channelFit * 0.12 + components.sourceQuality * 0.08
   );
   const blockers: string[] = [];
-  if (isPoliticalPersuasionTopic(candidate.topic)) blockers.push('political or election persuasion is excluded from autonomous production');
   if (sources.length < options.minSources) blockers.push(`requires at least ${options.minSources} independent source URLs`);
   if (candidate.confidence < options.minConfidence) blockers.push(`source confidence ${candidate.confidence} is below ${options.minConfidence}`);
   if (deterministic.advertiserSafetyScore < 60) blockers.push('advertiser-safety score is below 60');
