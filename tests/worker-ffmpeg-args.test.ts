@@ -53,6 +53,7 @@ describe('worker ffmpeg args', () => {
     expect(pipeline.normalizeStages.length).toBe(plan.timeline.length);
     expect(pipeline.normalizeStages.every((stage) => stage.args.includes(String(plan.timeline[0].durationSeconds)))).toBe(true);
     expect(pipeline.audioStage?.stage).toBe('audio_mux');
+    expect(pipeline.audioStage?.args).toContain('apad');
     expect(pipeline.concatStage.outputPath.endsWith('.timeline.mp4')).toBe(true);
     expect(pipeline.overlayStage.outputPath.endsWith('.with_captions.mp4')).toBe(true);
     expect(pipeline.exportStages.filter((stage) => stage.stage === 'export_short')).toHaveLength(2);
@@ -120,7 +121,7 @@ describe('worker ffmpeg args', () => {
     expect(pipeline.exportStages.filter((stage) => stage.stage === 'export_short')).toHaveLength(0);
   });
 
-  it('mixes music under narration at roughly -12 dB when both are present', () => {
+  it('mixes music under narration at roughly -12 dB and pads the mix to the video timeline', () => {
     const plan = planVideoAssembly({
       title: 'Narrated music video',
       durationMinutes: 1,
@@ -143,6 +144,6 @@ describe('worker ffmpeg args', () => {
       '/srv/work/u1/p1/job1/mixed-audio.srt'
     );
     expect(pipeline.audioStage?.args).toContain('-filter_complex');
-    expect(pipeline.audioStage?.args).toContain('[1:a][2:a]amix=inputs=2:duration=longest:weights=1 0.25[aout]');
+    expect(pipeline.audioStage?.args).toContain('[1:a][2:a]amix=inputs=2:duration=longest:weights=1 0.25,apad[aout]');
   });
 });
