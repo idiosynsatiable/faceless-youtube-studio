@@ -45,6 +45,7 @@ async function main() {
       storyboardScenes: 1,
       style: 'cinematic-clean'
     });
+    plan.timeline = [{ sceneIndex: 1, durationSeconds: 1, transition: 'fade out' }];
     plan.exportProfiles = [
       { name: 'Smoke master 16:9', width: 320, height: 180, aspect: '16:9', bitrateKbps: 500, fps: 24, audioKbps: 96 }
     ];
