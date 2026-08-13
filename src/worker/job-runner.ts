@@ -157,7 +157,7 @@ export async function runAssemblyJob(job: AssemblyJob, options: JobRunnerOptions
       };
     }
     if (stage.stage === 'export_master' || stage.stage === 'export_short' || stage.stage === 'thumbnail') {
-      const profile = job.plan.exportProfiles.find((candidate) => candidate.name === stage.exportProfile);
+      const profile = stage.profile;
       if (profile) {
         outputs.push({
           profile: profile.name,
