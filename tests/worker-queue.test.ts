@@ -1,13 +1,26 @@
 import { describe, expect, it } from 'vitest';
 import { InMemoryQueueAdapter, unsupportedRedisAdapter } from '@/worker/queue';
-import type { UploadJobRequest } from '@/lib/queue-producer';
+import type { RenderJobRequest, UploadJobRequest } from '@/lib/queue-producer';
 
-const request: UploadJobRequest = {
+const uploadRequest: UploadJobRequest = {
   id: 'req-1',
   videoProjectId: 'proj-1',
   privacyStatus: 'private',
   enqueuedAt: new Date().toISOString(),
   authorization: 'user_confirmed'
+};
+
+const renderRequest: RenderJobRequest = {
+  kind: 'render',
+  id: 'render-1',
+  userId: 'workspace1',
+  projectId: 'project1',
+  title: 'Render me',
+  durationMinutes: 8,
+  shortsCount: 1,
+  storyboardScenes: 8,
+  style: 'cinematic-clean',
+  enqueuedAt: new Date().toISOString()
 };
 
 describe('worker queue adapter', () => {
@@ -16,12 +29,12 @@ describe('worker queue adapter', () => {
     expect(await q.pop()).toBeNull();
   });
 
-  it('in-memory adapter returns enqueued requests in order, then null', async () => {
+  it('in-memory adapter returns render and upload requests in order', async () => {
     const q = new InMemoryQueueAdapter();
-    q.enqueue({ ...request, id: 'a' });
-    q.enqueue({ ...request, id: 'b' });
-    expect((await q.pop())?.id).toBe('a');
-    expect((await q.pop())?.id).toBe('b');
+    q.enqueue(renderRequest);
+    q.enqueue({ ...uploadRequest, id: 'upload-2' });
+    expect((await q.pop())?.id).toBe('render-1');
+    expect((await q.pop())?.id).toBe('upload-2');
     expect(await q.pop()).toBeNull();
   });
 
@@ -34,9 +47,9 @@ describe('worker queue adapter', () => {
     expect(q.failures[0].retryable).toBe(true);
   });
 
-  it('unsupported redis adapter throws a clear error pointing at docs', async () => {
+  it('unsupported adapter fails loudly when REDIS_URL is missing', async () => {
     const q = unsupportedRedisAdapter();
-    await expect(q.pop()).rejects.toThrowError(/FFMPEG_WORKER\.md/);
-    await expect(q.ack({ jobId: 'a', status: 'completed', outputs: [], log: [] })).rejects.toThrowError(/FFMPEG_WORKER\.md/);
+    await expect(q.pop()).rejects.toThrowError(/REDIS_URL/);
+    await expect(q.ack({ jobId: 'a', status: 'completed', outputs: [], log: [] })).rejects.toThrowError(/REDIS_URL/);
   });
 });
