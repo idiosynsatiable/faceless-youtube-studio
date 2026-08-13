@@ -20,6 +20,11 @@ jobs:
         run: npm run typecheck
       - name: Test
         run: npm test
+      - name: FFmpeg render smoke
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y ffmpeg
+          npm run test:ffmpeg-smoke
       - name: Scan secrets
         run: bash scripts/scan-secrets.sh
       - name: Scan placeholders

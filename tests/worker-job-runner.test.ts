@@ -54,16 +54,20 @@ describe('worker job runner', () => {
     expect(spawnFn).not.toHaveBeenCalled();
   });
 
-  it('runs every stage with a successful spawn and reports outputs per export profile', async () => {
+  it('runs every planned stage and reports the actual export set', async () => {
     const job = buildJob();
     const spawnFn: SpawnFn = vi.fn(async () => ({ code: 0, stdout: '', stderr: '' }));
     const fsImpl = noopFs();
     const outcome = await runAssemblyJob(job, { config, spawn: spawnFn, fsImpl });
     expect(outcome.status).toBe('completed');
-    // Stages: 2 normalize + 1 concat + 1 overlay + N export profiles.
-    const expectedSpawnCount = 2 + 1 + 1 + plan.exportProfiles.length;
+
+    const baseExportCount = plan.exportProfiles.filter((profile) => profile.aspect !== '9:16').length;
+    const exportCount = baseExportCount + plan.shortClips.length;
+    // Timeline renderer: one normalization per scene, then concat, audio mux, captions, then exports.
+    const expectedSpawnCount = plan.timeline.length + 1 + 1 + 1 + exportCount;
     expect(spawnFn).toHaveBeenCalledTimes(expectedSpawnCount);
-    expect(outcome.outputs.length).toBe(plan.exportProfiles.length);
+    expect(outcome.outputs.length).toBe(exportCount);
+    expect(outcome.outputs.filter((output) => output.profile.startsWith('YouTube Short '))).toHaveLength(plan.shortClips.length);
   });
 
   it('propagates a non-zero ffmpeg exit code as a failed outcome', async () => {

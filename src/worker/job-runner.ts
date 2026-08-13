@@ -1,10 +1,7 @@
-// Job runner. Orchestrates the 6-stage pipeline documented in
-// src/lib/video-assembler.ts using the safe argument builder + spawn
-// abstraction. All I/O paths run through the path allowlist.
+// Job runner for the safe FFmpeg assembly pipeline.
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-
 import type { AssemblyJob, JobOutcome, WorkerConfig } from './types';
 import { validateInputPath, safeJoinUnderRoot } from './path-allowlist';
 import { buildPipeline, UnsafeArgumentError, type StageArgs, type BuiltPipeline } from './ffmpeg-args';
@@ -13,12 +10,10 @@ import { realSpawn, type SpawnFn } from './spawn';
 export interface JobRunnerOptions {
   config: WorkerConfig;
   spawn?: SpawnFn;
-  /** Override for fs operations in tests. Defaults to node:fs/promises. */
   fsImpl?: {
     mkdir: (p: string, opts: { recursive: boolean }) => Promise<void>;
     writeFile: (p: string, data: string) => Promise<void>;
   };
-  /** Subtitle text written to the SRT file. If absent we still create an empty file. */
   defaultSubtitlesText?: string;
 }
 
@@ -45,25 +40,34 @@ export async function runAssemblyJob(job: AssemblyJob, options: JobRunnerOptions
   const spawnFn = options.spawn ?? realSpawn;
   const fsImpl = options.fsImpl ?? DEFAULT_FS;
 
-  // Stage 1: validate every input path against the allowlist.
   const validatedInputs: { path: string; role: string }[] = [];
   for (const input of job.inputs) {
-    const r = validateInputPath(input.path, options.config.inputsAllowlist);
-    if (!r.ok || !r.resolved) {
+    const validated = validateInputPath(input.path, options.config.inputsAllowlist);
+    if (!validated.ok || !validated.resolved) {
       return {
         jobId: job.id,
         status: 'rejected',
         outputs: [],
-        log: [...log, `input rejected: ${input.path} (${r.reason})`],
-        errorMessage: `input rejected: ${input.path} (${r.reason})`,
+        log: [`input rejected: ${input.path} (${validated.reason})`],
+        errorMessage: `input rejected: ${input.path} (${validated.reason})`,
         errorCategory: 'invalid_input_path'
       };
     }
-    validatedInputs.push({ path: r.resolved, role: input.role });
+    validatedInputs.push({ path: validated.resolved, role: input.role });
   }
-  log.push(`Stage 1: validated ${validatedInputs.length} input paths against allowlist`);
 
-  // Compute work and output directories under the outputs root.
+  if (!validatedInputs.some((input) => input.role === 'broll' || input.role === 'thumbnail_still')) {
+    return {
+      jobId: job.id,
+      status: 'rejected',
+      outputs: [],
+      log: ['render requires at least one video or still image'],
+      errorMessage: 'render requires at least one video or still image',
+      errorCategory: 'invalid_input_path'
+    };
+  }
+  log.push(`validated ${validatedInputs.length} asset(s)`);
+
   const workDir = workDirFor(options.config, job);
   const outputDir = outputDirFor(options.config, job);
   for (const dir of [workDir, outputDir]) {
@@ -73,7 +77,7 @@ export async function runAssemblyJob(job: AssemblyJob, options: JobRunnerOptions
         jobId: job.id,
         status: 'rejected',
         outputs: [],
-        log: [...log, `output path rejected: ${dir} (${safe.reason})`],
+        log: [`output path rejected: ${dir} (${safe.reason})`],
         errorMessage: `output path rejected: ${dir} (${safe.reason})`,
         errorCategory: 'output_path_not_writable'
       };
@@ -81,19 +85,27 @@ export async function runAssemblyJob(job: AssemblyJob, options: JobRunnerOptions
   }
   await fsImpl.mkdir(workDir, { recursive: true });
   await fsImpl.mkdir(outputDir, { recursive: true });
-  log.push(`Stage 1 complete: workDir=${workDir} outputDir=${outputDir}`);
 
-  // Build the SRT path inside the work directory.
-  const srtPath = path.join(workDir, `${job.scope.baseFilename}.srt`);
-  await fsImpl.writeFile(srtPath, options.defaultSubtitlesText ?? job.subtitlesText ?? '1\n00:00:00,000 --> 00:00:01,000\n\n');
+  const uploadedCaption = validatedInputs.find((input) => input.role === 'caption_track');
+  let captionPath: string;
+  if (uploadedCaption) {
+    captionPath = uploadedCaption.path;
+    log.push(`using uploaded caption track ${path.basename(captionPath)}`);
+  } else {
+    captionPath = path.join(workDir, `${job.scope.baseFilename}.srt`);
+    await fsImpl.writeFile(
+      captionPath,
+      options.defaultSubtitlesText ?? job.subtitlesText ?? '1\n00:00:00,000 --> 00:00:01,000\n\n'
+    );
+    log.push('no caption track uploaded; using empty safe caption track');
+  }
 
-  // Stages 2-5 via the safe argument builder.
   let pipeline: BuiltPipeline;
   try {
     pipeline = buildPipeline(
       { inputs: validatedInputs, workDir, outputDir, baseFilename: job.scope.baseFilename },
       job.plan,
-      srtPath
+      captionPath
     );
   } catch (err) {
     if (err instanceof UnsafeArgumentError) {
@@ -101,7 +113,7 @@ export async function runAssemblyJob(job: AssemblyJob, options: JobRunnerOptions
         jobId: job.id,
         status: 'rejected',
         outputs: [],
-        log: [...log, `unsafe argument: ${err.message}`],
+        log: [`unsafe argument: ${err.message}`],
         errorMessage: err.message,
         errorCategory: 'unsafe_argument'
       };
@@ -109,13 +121,12 @@ export async function runAssemblyJob(job: AssemblyJob, options: JobRunnerOptions
     throw err;
   }
 
-  // Persist the concat list file.
   await fsImpl.writeFile(pipeline.concatListPath, pipeline.concatListContent);
 
-  // Run normalize stages sequentially so we can fail fast.
   const stages: StageArgs[] = [
     ...pipeline.normalizeStages,
     pipeline.concatStage,
+    ...(pipeline.audioStage ? [pipeline.audioStage] : []),
     pipeline.overlayStage,
     ...pipeline.exportStages
   ];
@@ -124,9 +135,7 @@ export async function runAssemblyJob(job: AssemblyJob, options: JobRunnerOptions
     log.push(`running ${stage.stage}${stage.exportProfile ? ` (${stage.exportProfile})` : ''}`);
     let result;
     try {
-      result = await spawnFn(options.config.ffmpegBinary, stage.args, {
-        timeoutMs: options.config.jobTimeoutMs
-      });
+      result = await spawnFn(options.config.ffmpegBinary, stage.args, { timeoutMs: options.config.jobTimeoutMs });
     } catch (err) {
       return {
         jobId: job.id,
@@ -148,7 +157,7 @@ export async function runAssemblyJob(job: AssemblyJob, options: JobRunnerOptions
       };
     }
     if (stage.stage === 'export_master' || stage.stage === 'export_short' || stage.stage === 'thumbnail') {
-      const profile = job.plan.exportProfiles.find((p) => p.name === stage.exportProfile);
+      const profile = stage.profile;
       if (profile) {
         outputs.push({
           profile: profile.name,
@@ -162,10 +171,5 @@ export async function runAssemblyJob(job: AssemblyJob, options: JobRunnerOptions
   }
 
   log.push(`completed ${outputs.length} export(s)`);
-  return {
-    jobId: job.id,
-    status: 'completed',
-    outputs,
-    log
-  };
+  return { jobId: job.id, status: 'completed', outputs, log };
 }

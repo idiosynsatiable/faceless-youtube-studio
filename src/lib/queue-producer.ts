@@ -1,19 +1,7 @@
-// Queue producer for upload publish requests.
-//
-// The /api/uploads/publish route uses this to enqueue a request after
-// validating the user's explicit authorization. The default producer is
-// "disabled-safe" — it throws QueueDisabledError. Operators replace the
-// default at deploy time by calling setQueueProducer() from a bootstrap
-// module that wires up a real Redis-backed producer (see
-// docs/FFMPEG_WORKER.md → QueueProducer contract).
-//
-// The worker then pops these UploadJobRequest records, hydrates them into
-// full AssemblyJob records by reading the VideoProject from the database,
-// and runs the pipeline via runAssemblyJob (src/worker/job-runner.ts).
-//
-// Tests use InMemoryQueueProducer to capture enqueued requests.
+// Queue producer shared by render-only and YouTube publish jobs.
 
 export interface UploadJobRequest {
+  kind?: 'upload';
   id: string;
   videoProjectId: string;
   userId?: string;
@@ -23,13 +11,32 @@ export interface UploadJobRequest {
   authorization: 'user_confirmed';
 }
 
+export interface RenderJobRequest {
+  kind: 'render';
+  id: string;
+  userId: string;
+  projectId: string;
+  title: string;
+  durationMinutes: number;
+  shortsCount: number;
+  storyboardScenes: number;
+  style: 'cinematic' | 'cinematic-clean' | 'punchy' | 'documentary';
+  enqueuedAt: string;
+}
+
+export type PipelineJobRequest = UploadJobRequest | RenderJobRequest;
+
+export function isRenderJobRequest(request: PipelineJobRequest): request is RenderJobRequest {
+  return request.kind === 'render';
+}
+
 export interface QueueEnqueueResult {
   enqueued: true;
   queueKey?: string;
 }
 
 export interface QueueProducer {
-  enqueue(request: UploadJobRequest): Promise<QueueEnqueueResult>;
+  enqueue(request: PipelineJobRequest): Promise<QueueEnqueueResult>;
   close(): Promise<void>;
 }
 
@@ -41,13 +48,13 @@ export class QueueDisabledError extends Error {
   }
 }
 
-export class InMemoryQueueProducer implements QueueProducer {
-  readonly enqueued: UploadJobRequest[] = [];
+export class InMemoryQueueProducer<T extends PipelineJobRequest = UploadJobRequest> implements QueueProducer {
+  readonly enqueued: T[] = [];
   private closed = false;
 
-  async enqueue(request: UploadJobRequest): Promise<QueueEnqueueResult> {
+  async enqueue(request: PipelineJobRequest): Promise<QueueEnqueueResult> {
     if (this.closed) throw new Error('producer closed');
-    this.enqueued.push({ ...request });
+    this.enqueued.push({ ...request } as T);
     return { enqueued: true, queueKey: 'memory:faceless:jobs:upload' };
   }
 
@@ -60,7 +67,7 @@ export function disabledQueueProducer(): QueueProducer {
   return {
     async enqueue() {
       throw new QueueDisabledError(
-        'Queue is disabled. Set REDIS_URL and wire a QueueProducer (see docs/FFMPEG_WORKER.md).'
+        'Queue is disabled. Set REDIS_URL and run the FFmpeg worker to enable rendering.'
       );
     },
     async close() {

@@ -1,9 +1,4 @@
-// FFmpeg argument builder. Produces argv arrays — never shell strings.
-// Every output array is intended to be passed to child_process.spawn(cmd, args, { shell: false }).
-//
-// Implementation maps directly to the 6-stage pipeline documented in
-// src/lib/video-assembler.ts. Each stage is a pure function of the validated
-// inputs + the AssemblyPlan. No I/O happens here.
+// FFmpeg argument builder. Produces argv arrays only; commands are executed with shell:false.
 
 import path from 'node:path';
 import type { AssemblyPlan, ExportProfile } from '@/lib/video-assembler';
@@ -19,53 +14,14 @@ export class UnsafeArgumentError extends Error {
 
 const SHELL_METACHARS = /[;|&`$<>\\\n\r"']/;
 const FLAG_INJECTION_PREFIX = /^-/;
-
 const FFMPEG_FLAG_ALLOWLIST = new Set<string>([
-  '-y',
-  '-i',
-  '-f',
-  '-c:v',
-  '-c:a',
-  '-c:s',
-  '-r',
-  '-b:v',
-  '-b:a',
-  '-vf',
-  '-af',
-  '-filter_complex',
-  '-map',
-  '-ss',
-  '-t',
-  '-to',
-  '-aspect',
-  '-pix_fmt',
-  '-preset',
-  '-crf',
-  '-movflags',
-  '-frames:v',
-  '-frames:a',
-  '-vsync',
-  '-async',
-  '-shortest',
-  '-loop',
-  '-codec:v',
-  '-codec:a',
-  '-strict',
-  '-safe',
-  '-protocol_whitelist',
-  '-loglevel',
-  '-progress',
-  '-nostats',
-  '-an',
-  '-vn'
+  '-y', '-i', '-f', '-c:v', '-c:a', '-c:s', '-r', '-b:v', '-b:a', '-vf', '-af',
+  '-filter_complex', '-map', '-ss', '-t', '-to', '-aspect', '-pix_fmt', '-preset', '-crf',
+  '-movflags', '-frames:v', '-frames:a', '-vsync', '-async', '-shortest', '-loop', '-codec:v',
+  '-codec:a', '-strict', '-safe', '-protocol_whitelist', '-loglevel', '-progress', '-nostats',
+  '-an', '-vn'
 ]);
 
-/**
- * Safe-ify a single argument. Throws UnsafeArgumentError if the value contains
- * shell metacharacters. Flag-style values (starting with -) must be in the
- * allowlist; unknown flags are refused so user-supplied data can never inject
- * a new ffmpeg flag.
- */
 export function safeArg(value: string, kind: 'flag' | 'value' = 'value'): SafeArg {
   if (typeof value !== 'string') throw new UnsafeArgumentError('non-string argument', String(value));
   if (value.length === 0) throw new UnsafeArgumentError('empty argument', value);
@@ -73,15 +29,9 @@ export function safeArg(value: string, kind: 'flag' | 'value' = 'value'): SafeAr
     throw new UnsafeArgumentError(`shell metacharacter in argument: ${JSON.stringify(value)}`, value);
   }
   if (kind === 'flag') {
-    if (!FFMPEG_FLAG_ALLOWLIST.has(value)) {
-      throw new UnsafeArgumentError(`flag not in allowlist: ${value}`, value);
-    }
-  } else {
-    if (FLAG_INJECTION_PREFIX.test(value)) {
-      // Refuse any value that starts with a hyphen unless explicitly allowed.
-      // Numbers like -1.0 would be passed via a key=value form, not a bare arg.
-      throw new UnsafeArgumentError(`value starts with hyphen and could be parsed as flag: ${value}`, value);
-    }
+    if (!FFMPEG_FLAG_ALLOWLIST.has(value)) throw new UnsafeArgumentError(`flag not in allowlist: ${value}`, value);
+  } else if (FLAG_INJECTION_PREFIX.test(value)) {
+    throw new UnsafeArgumentError(`value starts with hyphen and could be parsed as flag: ${value}`, value);
   }
   return value;
 }
@@ -92,175 +42,195 @@ export function safeArgs(values: { value: string; kind?: 'flag' | 'value' }[]): 
 
 export interface BuildContext {
   inputs: { path: string; role: string }[];
-  /** Absolute work directory that already exists and is writable. */
   workDir: string;
-  /** Absolute output base for the project. */
   outputDir: string;
   baseFilename: string;
 }
 
 export interface StageArgs {
-  stage: 'normalize' | 'concat' | 'overlay' | 'export_master' | 'export_short' | 'thumbnail';
+  stage: 'normalize' | 'concat' | 'audio_mux' | 'overlay' | 'export_master' | 'export_short' | 'thumbnail';
   inputIndex?: number;
   exportProfile?: string;
+  profile?: ExportProfile;
   args: SafeArg[];
   outputPath: string;
 }
 
 const NORMALIZED_EXT = '.normalized.mp4';
 
-export function buildNormalizeArgs(ctx: BuildContext): StageArgs[] {
-  return ctx.inputs.map((input, idx) => {
-    const inSafe = safeArg(input.path);
-    const out = path.join(ctx.workDir, `input_${idx}${NORMALIZED_EXT}`);
-    const outSafe = safeArg(out);
+function visualInputs(ctx: BuildContext) {
+  return ctx.inputs.filter((input) => input.role === 'broll' || input.role === 'thumbnail_still');
+}
+
+function scaleFilter(width: number, height: number): string {
+  return `scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2`;
+}
+
+export function buildNormalizeArgs(ctx: BuildContext, plan: AssemblyPlan): StageArgs[] {
+  const visuals = visualInputs(ctx);
+  if (visuals.length === 0) return [];
+
+  return plan.timeline.map((scene, sceneIdx) => {
+    const input = visuals[sceneIdx % visuals.length];
+    const out = path.join(ctx.workDir, `scene_${sceneIdx}${NORMALIZED_EXT}`);
+    const duration = String(Math.max(1, scene.durationSeconds));
+    const baseScale = scaleFilter(1920, 1080);
+    const videoFilter = input.role === 'thumbnail_still'
+      ? baseScale
+      : `${baseScale},tpad=stop_mode=clone:stop_duration=${duration}`;
     const args: SafeArg[] = [
-      safeArg('-y', 'flag'),
-      safeArg('-loglevel', 'flag'),
-      safeArg('error'),
-      safeArg('-i', 'flag'),
-      inSafe,
-      safeArg('-c:v', 'flag'),
-      safeArg('libx264'),
-      safeArg('-c:a', 'flag'),
-      safeArg('aac'),
-      safeArg('-pix_fmt', 'flag'),
-      safeArg('yuv420p'),
-      safeArg('-r', 'flag'),
-      safeArg('30'),
-      safeArg('-preset', 'flag'),
-      safeArg('medium'),
-      safeArg('-crf', 'flag'),
-      safeArg('20'),
-      outSafe
+      safeArg('-y', 'flag'), safeArg('-loglevel', 'flag'), safeArg('error'),
+      ...(input.role === 'thumbnail_still' ? [safeArg('-loop', 'flag'), safeArg('1')] : []),
+      safeArg('-i', 'flag'), safeArg(input.path),
+      safeArg('-t', 'flag'), safeArg(duration),
+      safeArg('-vf', 'flag'), safeArg(videoFilter),
+      safeArg('-c:v', 'flag'), safeArg('libx264'),
+      safeArg('-an', 'flag'),
+      safeArg('-pix_fmt', 'flag'), safeArg('yuv420p'),
+      safeArg('-r', 'flag'), safeArg('30'),
+      safeArg('-preset', 'flag'), safeArg('medium'),
+      safeArg('-crf', 'flag'), safeArg('20'),
+      safeArg(out)
     ];
-    return { stage: 'normalize', inputIndex: idx, args, outputPath: out };
+    return { stage: 'normalize', inputIndex: sceneIdx, args, outputPath: out };
   });
 }
 
 export function buildConcatListContent(normalizedPaths: string[]): string {
-  return normalizedPaths
-    .map((p) => {
-      // The concat demuxer's list file accepts a `file '<path>'` form.
-      // We escape only the single quote character per ffmpeg docs (it must be
-      // doubled). Other special characters are already disallowed by safeArg().
-      const escaped = p.replace(/'/g, "'\\''");
-      return `file '${escaped}'`;
-    })
-    .join('\n') + '\n';
+  return normalizedPaths.map((p) => `file '${p.replace(/'/g, "'\\''")}'`).join('\n') + '\n';
 }
 
 export function buildConcatArgs(ctx: BuildContext, listFilePath: string): StageArgs {
   const out = path.join(ctx.workDir, `${ctx.baseFilename}.timeline.mp4`);
   const args: SafeArg[] = [
-    safeArg('-y', 'flag'),
-    safeArg('-loglevel', 'flag'),
-    safeArg('error'),
-    safeArg('-f', 'flag'),
-    safeArg('concat'),
-    safeArg('-safe', 'flag'),
-    safeArg('0'),
-    safeArg('-i', 'flag'),
-    safeArg(listFilePath),
-    safeArg('-c:v', 'flag'),
-    safeArg('libx264'),
-    safeArg('-c:a', 'flag'),
-    safeArg('aac'),
-    safeArg('-pix_fmt', 'flag'),
-    safeArg('yuv420p'),
-    safeArg('-r', 'flag'),
-    safeArg('30'),
-    safeArg('-preset', 'flag'),
-    safeArg('medium'),
-    safeArg('-crf', 'flag'),
-    safeArg('20'),
-    safeArg('-movflags', 'flag'),
-    safeArg('+faststart'),
-    safeArg(out)
+    safeArg('-y', 'flag'), safeArg('-loglevel', 'flag'), safeArg('error'),
+    safeArg('-f', 'flag'), safeArg('concat'), safeArg('-safe', 'flag'), safeArg('0'),
+    safeArg('-i', 'flag'), safeArg(listFilePath),
+    safeArg('-c:v', 'flag'), safeArg('libx264'), safeArg('-an', 'flag'),
+    safeArg('-pix_fmt', 'flag'), safeArg('yuv420p'), safeArg('-r', 'flag'), safeArg('30'),
+    safeArg('-preset', 'flag'), safeArg('medium'), safeArg('-crf', 'flag'), safeArg('20'),
+    safeArg('-movflags', 'flag'), safeArg('+faststart'), safeArg(out)
   ];
   return { stage: 'concat', args, outputPath: out };
 }
 
-export function buildOverlayArgs(ctx: BuildContext, timelinePath: string, srtPath: string): StageArgs {
-  const out = path.join(ctx.workDir, `${ctx.baseFilename}.with_captions.mp4`);
-  // The subtitles filter accepts a path, but we hard-rule out shell-meta chars
-  // via safeArg. The srtPath is an absolute path produced by safeJoinUnderRoot.
+export function buildAudioMuxArgs(
+  ctx: BuildContext,
+  timelinePath: string,
+  narrationPath?: string,
+  musicPath?: string
+): StageArgs | undefined {
+  if (!narrationPath && !musicPath) return undefined;
+
+  const out = path.join(ctx.workDir, `${ctx.baseFilename}.with_audio.mp4`);
+  if (narrationPath && musicPath) {
+    const args: SafeArg[] = [
+      safeArg('-y', 'flag'), safeArg('-loglevel', 'flag'), safeArg('error'),
+      safeArg('-i', 'flag'), safeArg(timelinePath),
+      safeArg('-i', 'flag'), safeArg(narrationPath),
+      safeArg('-i', 'flag'), safeArg(musicPath),
+      safeArg('-filter_complex', 'flag'), safeArg('[1:a][2:a]amix=inputs=2:duration=longest:weights=1 0.25,apad[aout]'),
+      safeArg('-map', 'flag'), safeArg('0:v:0'),
+      safeArg('-map', 'flag'), safeArg('[aout]'),
+      safeArg('-c:v', 'flag'), safeArg('copy'),
+      safeArg('-c:a', 'flag'), safeArg('aac'),
+      safeArg('-b:a', 'flag'), safeArg('192k'),
+      safeArg('-shortest', 'flag'), safeArg(out)
+    ];
+    return { stage: 'audio_mux', args, outputPath: out };
+  }
+
+  const audioPath = narrationPath ?? musicPath!;
   const args: SafeArg[] = [
-    safeArg('-y', 'flag'),
-    safeArg('-loglevel', 'flag'),
-    safeArg('error'),
-    safeArg('-i', 'flag'),
-    safeArg(timelinePath),
-    safeArg('-vf', 'flag'),
-    safeArg(`subtitles=${srtPath}`),
-    safeArg('-c:v', 'flag'),
-    safeArg('libx264'),
-    safeArg('-c:a', 'flag'),
-    safeArg('copy'),
-    safeArg('-pix_fmt', 'flag'),
-    safeArg('yuv420p'),
-    safeArg('-preset', 'flag'),
-    safeArg('medium'),
-    safeArg('-crf', 'flag'),
-    safeArg('20'),
+    safeArg('-y', 'flag'), safeArg('-loglevel', 'flag'), safeArg('error'),
+    safeArg('-i', 'flag'), safeArg(timelinePath),
+    safeArg('-i', 'flag'), safeArg(audioPath),
+    safeArg('-map', 'flag'), safeArg('0:v:0'),
+    safeArg('-map', 'flag'), safeArg('1:a:0'),
+    safeArg('-af', 'flag'), safeArg('apad'),
+    safeArg('-c:v', 'flag'), safeArg('copy'),
+    safeArg('-c:a', 'flag'), safeArg('aac'),
+    safeArg('-b:a', 'flag'), safeArg('192k'),
+    safeArg('-shortest', 'flag'), safeArg(out)
+  ];
+  return { stage: 'audio_mux', args, outputPath: out };
+}
+
+export function buildOverlayArgs(ctx: BuildContext, mediaPath: string, srtPath: string): StageArgs {
+  const out = path.join(ctx.workDir, `${ctx.baseFilename}.with_captions.mp4`);
+  const args: SafeArg[] = [
+    safeArg('-y', 'flag'), safeArg('-loglevel', 'flag'), safeArg('error'),
+    safeArg('-i', 'flag'), safeArg(mediaPath),
+    safeArg('-vf', 'flag'), safeArg(`subtitles=${srtPath}`),
+    safeArg('-c:v', 'flag'), safeArg('libx264'),
+    safeArg('-c:a', 'flag'), safeArg('copy'),
+    safeArg('-pix_fmt', 'flag'), safeArg('yuv420p'),
+    safeArg('-preset', 'flag'), safeArg('medium'), safeArg('-crf', 'flag'), safeArg('20'),
     safeArg(out)
   ];
   return { stage: 'overlay', args, outputPath: out };
 }
 
-export function buildExportArgs(
-  ctx: BuildContext,
-  withCaptionsPath: string,
-  profile: ExportProfile
-): StageArgs {
+export function buildExportArgs(ctx: BuildContext, sourcePath: string, profile: ExportProfile): StageArgs {
   const safeProfile = profile.name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
   const isThumbnail = profile.fps === 0 && profile.bitrateKbps === 0;
   const out = path.join(ctx.outputDir, `${ctx.baseFilename}.${safeProfile}${isThumbnail ? '.jpg' : '.mp4'}`);
   if (isThumbnail) {
-    const args: SafeArg[] = [
-      safeArg('-y', 'flag'),
-      safeArg('-loglevel', 'flag'),
-      safeArg('error'),
-      safeArg('-i', 'flag'),
-      safeArg(withCaptionsPath),
-      safeArg('-frames:v', 'flag'),
-      safeArg('1'),
-      safeArg('-vf', 'flag'),
-      safeArg(`scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2`),
-      safeArg(out)
-    ];
-    return { stage: 'thumbnail', exportProfile: profile.name, args, outputPath: out };
+    return {
+      stage: 'thumbnail', exportProfile: profile.name, profile, outputPath: out,
+      args: [
+        safeArg('-y', 'flag'), safeArg('-loglevel', 'flag'), safeArg('error'),
+        safeArg('-i', 'flag'), safeArg(sourcePath), safeArg('-frames:v', 'flag'), safeArg('1'),
+        safeArg('-vf', 'flag'), safeArg(scaleFilter(profile.width, profile.height)),
+        safeArg(out)
+      ]
+    };
   }
   const stage: StageArgs['stage'] = profile.aspect === '9:16' ? 'export_short' : 'export_master';
-  const args: SafeArg[] = [
-    safeArg('-y', 'flag'),
-    safeArg('-loglevel', 'flag'),
-    safeArg('error'),
-    safeArg('-i', 'flag'),
-    safeArg(withCaptionsPath),
-    safeArg('-vf', 'flag'),
-    safeArg(`scale=${profile.width}:${profile.height}:force_original_aspect_ratio=decrease,pad=${profile.width}:${profile.height}:(ow-iw)/2:(oh-ih)/2`),
-    safeArg('-c:v', 'flag'),
-    safeArg('libx264'),
-    safeArg('-c:a', 'flag'),
-    safeArg('aac'),
-    safeArg('-r', 'flag'),
-    safeArg(String(profile.fps)),
-    safeArg('-b:v', 'flag'),
-    safeArg(`${profile.bitrateKbps}k`),
-    safeArg('-b:a', 'flag'),
-    safeArg(`${profile.audioKbps}k`),
-    safeArg('-pix_fmt', 'flag'),
-    safeArg('yuv420p'),
-    safeArg('-preset', 'flag'),
-    safeArg('medium'),
-    safeArg('-crf', 'flag'),
-    safeArg('20'),
-    safeArg('-movflags', 'flag'),
-    safeArg('+faststart'),
-    safeArg(out)
-  ];
-  return { stage, exportProfile: profile.name, args, outputPath: out };
+  return {
+    stage, exportProfile: profile.name, profile, outputPath: out,
+    args: [
+      safeArg('-y', 'flag'), safeArg('-loglevel', 'flag'), safeArg('error'),
+      safeArg('-i', 'flag'), safeArg(sourcePath),
+      safeArg('-vf', 'flag'), safeArg(scaleFilter(profile.width, profile.height)),
+      safeArg('-c:v', 'flag'), safeArg('libx264'), safeArg('-c:a', 'flag'), safeArg('aac'),
+      safeArg('-r', 'flag'), safeArg(String(profile.fps)),
+      safeArg('-b:v', 'flag'), safeArg(`${profile.bitrateKbps}k`),
+      safeArg('-b:a', 'flag'), safeArg(`${profile.audioKbps}k`),
+      safeArg('-pix_fmt', 'flag'), safeArg('yuv420p'),
+      safeArg('-preset', 'flag'), safeArg('medium'), safeArg('-crf', 'flag'), safeArg('20'),
+      safeArg('-movflags', 'flag'), safeArg('+faststart'), safeArg(out)
+    ]
+  };
+}
+
+export function buildShortExportArgs(
+  ctx: BuildContext,
+  sourcePath: string,
+  profile: ExportProfile,
+  clipIndex: number,
+  startSeconds: number,
+  durationSeconds: number
+): StageArgs {
+  const numberedProfile: ExportProfile = { ...profile, name: `YouTube Short ${clipIndex + 1} 9:16` };
+  const out = path.join(ctx.outputDir, `${ctx.baseFilename}.youtube-short-${clipIndex + 1}.mp4`);
+  return {
+    stage: 'export_short', exportProfile: numberedProfile.name, profile: numberedProfile, outputPath: out,
+    args: [
+      safeArg('-y', 'flag'), safeArg('-loglevel', 'flag'), safeArg('error'),
+      safeArg('-ss', 'flag'), safeArg(String(Math.max(0, startSeconds))),
+      safeArg('-i', 'flag'), safeArg(sourcePath),
+      safeArg('-t', 'flag'), safeArg(String(Math.max(1, durationSeconds))),
+      safeArg('-vf', 'flag'), safeArg(scaleFilter(profile.width, profile.height)),
+      safeArg('-c:v', 'flag'), safeArg('libx264'), safeArg('-c:a', 'flag'), safeArg('aac'),
+      safeArg('-r', 'flag'), safeArg(String(profile.fps)),
+      safeArg('-b:v', 'flag'), safeArg(`${profile.bitrateKbps}k`),
+      safeArg('-b:a', 'flag'), safeArg(`${profile.audioKbps}k`),
+      safeArg('-pix_fmt', 'flag'), safeArg('yuv420p'),
+      safeArg('-preset', 'flag'), safeArg('medium'), safeArg('-crf', 'flag'), safeArg('20'),
+      safeArg('-movflags', 'flag'), safeArg('+faststart'), safeArg(out)
+    ]
+  };
 }
 
 export interface BuiltPipeline {
@@ -270,18 +240,39 @@ export interface BuiltPipeline {
   concatStage: StageArgs;
   concatListPath: string;
   concatListContent: string;
+  audioStage?: StageArgs;
   overlayStage: StageArgs;
   exportStages: StageArgs[];
   outputs: string[];
 }
 
 export function buildPipeline(ctx: BuildContext, plan: AssemblyPlan, srtPath: string): BuiltPipeline {
-  const normalizeStages = buildNormalizeArgs(ctx);
+  const normalizeStages = buildNormalizeArgs(ctx, plan);
+  if (normalizeStages.length === 0) {
+    throw new UnsafeArgumentError('at least one visual input is required', ctx.baseFilename);
+  }
   const concatListPath = path.join(ctx.workDir, 'concat-list.txt');
   const concatListContent = buildConcatListContent(normalizeStages.map((s) => s.outputPath));
   const concatStage = buildConcatArgs(ctx, concatListPath);
-  const overlayStage = buildOverlayArgs(ctx, concatStage.outputPath, srtPath);
-  const exportStages = plan.exportProfiles.map((p) => buildExportArgs(ctx, overlayStage.outputPath, p));
+  const narrationInput = ctx.inputs.find((input) => input.role === 'narration');
+  const musicInput = ctx.inputs.find((input) => input.role === 'music');
+  const audioStage = buildAudioMuxArgs(ctx, concatStage.outputPath, narrationInput?.path, musicInput?.path);
+  const overlayStage = buildOverlayArgs(ctx, audioStage?.outputPath ?? concatStage.outputPath, srtPath);
+
+  const baseProfiles = plan.exportProfiles.filter((profile) => profile.aspect !== '9:16');
+  const exportStages = baseProfiles.map((profile) => buildExportArgs(ctx, overlayStage.outputPath, profile));
+
+  const shortProfile = plan.exportProfiles.find((profile) => profile.name === 'YouTube Shorts 9:16')
+    ?? { name: 'YouTube Shorts 9:16', width: 1080, height: 1920, aspect: '9:16', bitrateKbps: 8000, fps: 30, audioKbps: 192 };
+  const totalDuration = Math.max(1, plan.timeline.reduce((sum, scene) => sum + scene.durationSeconds, 0));
+  const shortCount = plan.shortClips.length;
+  for (let i = 0; i < shortCount; i += 1) {
+    const clipDuration = Math.min(plan.shortClips[i].durationSeconds, totalDuration);
+    const latestStart = Math.max(0, totalDuration - clipDuration);
+    const start = shortCount <= 1 ? 0 : Math.round((latestStart * i) / (shortCount - 1));
+    exportStages.push(buildShortExportArgs(ctx, overlayStage.outputPath, shortProfile, i, start, clipDuration));
+  }
+
   return {
     workDir: ctx.workDir,
     outputDir: ctx.outputDir,
@@ -289,8 +280,9 @@ export function buildPipeline(ctx: BuildContext, plan: AssemblyPlan, srtPath: st
     concatStage,
     concatListPath,
     concatListContent,
+    audioStage,
     overlayStage,
     exportStages,
-    outputs: exportStages.map((s) => s.outputPath)
+    outputs: exportStages.map((stage) => stage.outputPath)
   };
 }

@@ -1,20 +1,6 @@
-// Redis-backed QueueProducer bootstrap.
-//
-// When `REDIS_URL` is set in the environment, this module wires
-// setQueueProducer() to a real Redis client. The `/api/uploads/publish`
-// route then enqueues UploadJobRequest payloads onto the
-// `faceless:jobs:upload` list, where the FFmpeg worker consumes them.
-//
-// When `REDIS_URL` is not set, this module is a no-op and the default
-// disabled-safe producer stays in place. The publish route returns
-// `503 queue_disabled` until a producer is wired, which is the intended
-// fail-loud behavior.
-//
-// Wiring: instrumentation.ts at the repo root imports this module from
-// inside Next.js's `register()` hook. The Next.js worker process invokes
-// initializeRedisQueueProducer() once at startup.
+// Redis-backed queue producer bootstrap for both render and publish jobs.
 
-import { setQueueProducer, type QueueProducer, type UploadJobRequest } from '@/lib/queue-producer';
+import { setQueueProducer, type PipelineJobRequest, type QueueProducer } from '@/lib/queue-producer';
 
 export interface RedisBootstrapResult {
   ok: boolean;
@@ -31,6 +17,7 @@ let initialized = false;
 let activeProducer: QueueProducer | null = null;
 
 const DEFAULT_QUEUE_KEY = 'faceless:jobs:upload';
+const STATUS_KEY = 'faceless:jobs:status';
 
 export async function initializeRedisQueueProducer(
   redisUrl: string | undefined = process.env.REDIS_URL,
@@ -46,18 +33,16 @@ export async function initializeRedisQueueProducer(
   let redisModule: typeof import('redis');
   try {
     redisModule = await import('redis');
-  } catch (err) {
+  } catch {
     return {
       ok: false,
       reason: 'redis_package_missing',
-      message:
-        '`redis` npm package is not installed. Run `npm install redis@4.7.0` to enable the queue producer.'
+      message: '`redis` npm package is not installed. Install redis@4.7.0 to enable rendering.'
     };
   }
 
   const client = redisModule.createClient({ url: redisUrl });
   client.on('error', (err: Error) => {
-    // Avoid throwing inside the listener; log and let the next enqueue retry.
     console.error('[redis-bootstrap] client error:', err.message);
   });
 
@@ -72,15 +57,20 @@ export async function initializeRedisQueueProducer(
   }
 
   const producer: QueueProducer = {
-    async enqueue(request: UploadJobRequest) {
+    async enqueue(request: PipelineJobRequest) {
+      await client.hSet(
+        STATUS_KEY,
+        request.id,
+        JSON.stringify({ status: 'queued', jobId: request.id, kind: request.kind ?? 'upload', updatedAt: new Date().toISOString() })
+      );
       await client.rPush(queueKey, JSON.stringify(request));
       return { enqueued: true, queueKey };
     },
     async close() {
       try {
-        await client.quit();
+        if (client.isOpen) await client.quit();
       } catch {
-        // ignore — the process is shutting down anyway
+        // process is shutting down
       }
     }
   };

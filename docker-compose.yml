@@ -17,18 +17,65 @@ services:
     ports:
       - "6379:6379"
 
+  volumes-init:
+    image: alpine:3.20
+    user: "0:0"
+    volumes:
+      - faceless_inputs:/var/lib/faceless-studio/inputs
+      - faceless_exports:/var/lib/faceless-studio/exports
+    command: >-
+      sh -c "mkdir -p /var/lib/faceless-studio/inputs /var/lib/faceless-studio/exports &&
+      chown -R 10001:10001 /var/lib/faceless-studio/inputs /var/lib/faceless-studio/exports &&
+      chmod -R 775 /var/lib/faceless-studio/inputs /var/lib/faceless-studio/exports"
+
   app:
     build: .
+    restart: unless-stopped
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      volumes-init:
+        condition: service_completed_successfully
     environment:
       DATABASE_URL: postgresql://faceless:faceless@postgres:5432/faceless_studio
       REDIS_URL: redis://redis:6379
       JWT_SECRET: change_me_with_secure_local_secret
       NEXT_PUBLIC_APP_URL: http://localhost:3000
+      WORKER_INPUT_ALLOWLIST: /var/lib/faceless-studio/inputs
+      WORKER_OUTPUT_ROOT: /var/lib/faceless-studio/exports
     ports:
       - "3000:3000"
+    volumes:
+      - faceless_inputs:/var/lib/faceless-studio/inputs
+      - faceless_exports:/var/lib/faceless-studio/exports:ro
+
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile.worker
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_started
+      redis:
+        condition: service_started
+      volumes-init:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://faceless:faceless@postgres:5432/faceless_studio
+      REDIS_URL: redis://redis:6379
+      WORKER_INPUT_ALLOWLIST: /var/lib/faceless-studio/inputs
+      WORKER_OUTPUT_ROOT: /var/lib/faceless-studio/exports
+      FFMPEG_BINARY: /usr/bin/ffmpeg
+      WORKER_CONCURRENCY: "1"
+      WORKER_JOB_TIMEOUT_MS: "900000"
+    volumes:
+      - faceless_inputs:/var/lib/faceless-studio/inputs:ro
+      - faceless_exports:/var/lib/faceless-studio/exports
 
 volumes:
   faceless_pg_data:
+  faceless_inputs:
+  faceless_exports:
