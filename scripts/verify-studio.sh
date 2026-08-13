@@ -4,7 +4,8 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
-REPORT="$ROOT/VERIFY_REPORT.md"
+REPORT="$ROOT/artifacts/VERIFY_REPORT.md"
+mkdir -p "$(dirname "$REPORT")"
 echo "# Verify report" > "$REPORT"
 echo "Generated: $(date -u +%FT%TZ)" >> "$REPORT"
 echo "" >> "$REPORT"
@@ -23,11 +24,13 @@ step() {
   fi
 }
 
-step "Install" npm install --no-audit --no-fund || true
-step "Typecheck" npm run typecheck || true
-step "Tests" npm test -- --reporter=default || true
-step "Scan secrets" bash scripts/scan-secrets.sh || true
-step "Scan placeholders" bash scripts/scan-placeholders.sh || true
+step "Install" npm ci --no-audit --no-fund
+step "Lint" npm run lint
+step "Typecheck" npm run typecheck
+step "Tests" npm test -- --reporter=default
+step "Build" npm run build
+step "Scan secrets" bash scripts/scan-secrets.sh
+step "Scan placeholders" bash scripts/scan-placeholders.sh
 
 echo "## Required docs" >> "$REPORT"
 required=(
@@ -60,6 +63,7 @@ if [[ "$missing" -eq 0 ]]; then
   echo "Required docs: all present" >> "$REPORT"
 else
   echo "Required docs: missing files" >> "$REPORT"
+  exit 1
 fi
 
 echo "Report written to $REPORT"

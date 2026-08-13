@@ -21,7 +21,7 @@ export async function GET() {
       select: { id: true, name: true, niche: true, regionFocus: true, language: true, youtubeChannelId: true }
     });
     return NextResponse.json({ ok: true, channels });
-  } catch (err) {
+  } catch {
     return NextResponse.json({ ok: false, reason: 'database_unavailable', detail: 'Channels table not available.' }, { status: 503 });
   }
 }

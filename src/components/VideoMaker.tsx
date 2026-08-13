@@ -58,15 +58,18 @@ export default function VideoMaker() {
   const storedJobRef = useRef<string | null>(null);
 
   useEffect(() => {
-    const existing = localStorage.getItem(WORKSPACE_KEY);
-    const workspace = existing || id('ws');
-    if (!existing) localStorage.setItem(WORKSPACE_KEY, workspace);
-    setWorkspaceId(workspace);
-    setProjectId(id('project'));
+    const timer = window.setTimeout(() => {
+      const existing = localStorage.getItem(WORKSPACE_KEY);
+      const workspace = existing || id('ws');
+      if (!existing) localStorage.setItem(WORKSPACE_KEY, workspace);
+      setWorkspaceId(workspace);
+      setProjectId(id('project'));
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   useEffect(() => {
-    if (!jobId || jobStatus === 'completed' || jobStatus === 'failed') return;
+    if (!jobId || jobStatus === 'completed' || jobStatus === 'failed' || jobStatus === 'rejected') return;
     let cancelled = false;
     const poll = async () => {
       try {
@@ -74,14 +77,25 @@ export default function VideoMaker() {
         const data = (await response.json()) as JobPayload;
         if (cancelled) return;
         if (!response.ok) {
-          if (response.status !== 404) setError(data.detail || data.error || 'Render status is unavailable.');
+          setBusy(false);
+          setJobStatus('failed');
+          setError(
+            response.status === 404
+              ? 'This render job is no longer available. Start a new render to try again.'
+              : data.detail || data.error || 'Render status is unavailable.'
+          );
           return;
         }
         const nextStatus = data.outcome?.status || data.status || 'queued';
         setJobStatus(nextStatus);
         if (data.outcome) setOutcome(data.outcome);
-        if (nextStatus === 'failed') {
-          setError(data.outcome?.errorMessage || 'Render failed. Check the worker logs.');
+        if (nextStatus === 'failed' || nextStatus === 'rejected') {
+          setError(
+            data.outcome?.errorMessage ||
+            (nextStatus === 'rejected'
+              ? 'Render was rejected. Check the uploaded files and try again.'
+              : 'Render failed. Check the worker logs.')
+          );
           setBusy(false);
         }
         if (nextStatus === 'completed') {
@@ -103,7 +117,11 @@ export default function VideoMaker() {
           }
         }
       } catch (err) {
-        if (!cancelled) setError(err instanceof Error ? err.message : 'Render status request failed.');
+        if (!cancelled) {
+          setBusy(false);
+          setJobStatus('failed');
+          setError(err instanceof Error ? err.message : 'Render status request failed.');
+        }
       }
     };
     void poll();
@@ -133,6 +151,7 @@ export default function VideoMaker() {
       }
       uploadedNames.push(file.name);
       setUploaded((current) => current.includes(file.name) ? current : [...current, file.name]);
+      setFiles((current) => current.filter((candidate) => candidate !== file));
     }
     return uploadedNames;
   }

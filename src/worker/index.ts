@@ -200,13 +200,22 @@ export async function runWorkerLoop(options: WorkerLoopOptions = {}): Promise<vo
         await adapter.ack(outcome);
         log(`request ${request.id} completed with ${outcome.outputs.length} output(s)`);
       } else if (outcome.status === 'rejected') {
-        await adapter.nack(request.id, outcome.errorMessage ?? 'rejected', false);
+        await adapter.nack(outcome, false);
+        log(`request ${request.id} rejected: ${outcome.errorMessage ?? 'invalid render request'}`);
       } else {
-        await adapter.nack(request.id, outcome.errorMessage ?? 'failed', true);
+        await adapter.nack(outcome, true);
+        log(`request ${request.id} failed: ${outcome.errorMessage ?? 'render failed'}`);
       }
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);
-      await adapter.nack(request.id, message, true);
+      await adapter.nack({
+        jobId: request.id,
+        status: 'failed',
+        outputs: [],
+        log: [`worker exception: ${message}`],
+        errorMessage: message,
+        errorCategory: 'unknown'
+      }, true);
       log(`request ${request.id} threw: ${message}`);
     }
   }

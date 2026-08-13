@@ -14,3 +14,6 @@ prisma/dev.db
 prisma/*.db-journal
 .idea
 .vscode
+
+artifacts/
+*.tsbuildinfo

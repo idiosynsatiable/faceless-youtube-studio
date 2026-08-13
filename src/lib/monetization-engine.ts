@@ -132,13 +132,14 @@ function affiliateCategories(niche: string): string[] {
 }
 
 function firstTenSponsorTargets(niche: string): string[] {
+  const topic = niche.trim() || 'your niche';
   const generic = [
-    'Productivity SaaS company in your topic adjacent space',
+    `Productivity SaaS company with a ${topic} audience`,
     'Newsletter platform that targets your audience',
     'Course platform serving your audience',
     'Tool that solves a problem you cover often',
     'Hosting or domain provider relevant to creators',
-    'Education platform aligned with your niche',
+    `Education platform aligned with ${topic}`,
     'Software with a free tier and clear funnel',
     'Direct-to-consumer brand whose audience overlaps',
     'Mid-market B2B tool that needs creator distribution',

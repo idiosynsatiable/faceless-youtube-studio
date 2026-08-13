@@ -24,11 +24,14 @@ export default function RenderHistory() {
   const [items, setItems] = useState<RenderHistoryItem[]>([]);
 
   useEffect(() => {
-    try {
-      setItems(JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') as RenderHistoryItem[]);
-    } catch {
-      setItems([]);
-    }
+    const timer = window.setTimeout(() => {
+      try {
+        setItems(JSON.parse(localStorage.getItem(HISTORY_KEY) || '[]') as RenderHistoryItem[]);
+      } catch {
+        setItems([]);
+      }
+    }, 0);
+    return () => window.clearTimeout(timer);
   }, []);
 
   if (items.length === 0) {

@@ -7,14 +7,14 @@ import type { JobOutcome } from './types';
 export interface QueueAdapter {
   pop(timeoutMs?: number): Promise<PipelineJobRequest | null>;
   ack(outcome: JobOutcome): Promise<void>;
-  nack(jobId: string, errorMessage: string, retryable: boolean): Promise<void>;
+  nack(outcome: JobOutcome, retryable: boolean): Promise<void>;
   close(): Promise<void>;
 }
 
 export class InMemoryQueueAdapter implements QueueAdapter {
   private readonly pending: PipelineJobRequest[] = [];
   readonly outcomes: JobOutcome[] = [];
-  readonly failures: { jobId: string; errorMessage: string; retryable: boolean }[] = [];
+  readonly failures: { outcome: JobOutcome; retryable: boolean }[] = [];
   private closed = false;
 
   enqueue(request: PipelineJobRequest): void {
@@ -31,8 +31,8 @@ export class InMemoryQueueAdapter implements QueueAdapter {
     this.outcomes.push(outcome);
   }
 
-  async nack(jobId: string, errorMessage: string, retryable: boolean): Promise<void> {
-    this.failures.push({ jobId, errorMessage, retryable });
+  async nack(outcome: JobOutcome, retryable: boolean): Promise<void> {
+    this.failures.push({ outcome, retryable });
   }
 
   async close(): Promise<void> {
@@ -250,7 +250,14 @@ export function createRedisQueueAdapter(
             continue;
           }
           if (!isPipelineJobRequest(parsed)) {
-            await this.nack((parsed as { id?: string })?.id ?? 'invalid-job', 'invalid_job_shape', false);
+            await this.nack({
+              jobId: (parsed as { id?: string })?.id ?? 'invalid-job',
+              status: 'rejected',
+              outputs: [],
+              log: ['invalid queue job shape'],
+              errorMessage: 'invalid_job_shape',
+              errorCategory: 'invalid_input_path'
+            }, false);
             continue;
           }
           await client.hSet(
@@ -287,10 +294,10 @@ export function createRedisQueueAdapter(
       );
     },
 
-    async nack(jobId: string, errorMessage: string, retryable: boolean) {
+    async nack(outcome: JobOutcome, retryable: boolean) {
       await ensureConnected();
-      stopHeartbeat(jobId);
-      const claim = await readClaim(jobId);
+      stopHeartbeat(outcome.jobId);
+      const claim = await readClaim(outcome.jobId);
       const currentAttempt = claim?.attempt ?? 0;
 
       if (retryable && claim && currentAttempt < MAX_RETRIES) {
@@ -299,39 +306,33 @@ export function createRedisQueueAdapter(
         await sleep(backoffMs);
         const retryStatus = JSON.stringify({
           status: 'queued',
-          jobId,
+          jobId: outcome.jobId,
           retrying: true,
           attempt: nextAttempt,
-          errorMessage,
+          errorMessage: outcome.errorMessage,
           updatedAt: new Date().toISOString()
         });
         await evalScript(
           RETRY_SCRIPT,
           [CLAIM_KEY, INFLIGHT_KEY, queueKey, STATUS_KEY],
-          [jobId, String(nextAttempt), retryStatus]
+          [outcome.jobId, String(nextAttempt), retryStatus]
         );
         return;
       }
 
-      const outcome: JobOutcome = {
-        jobId,
-        status: 'failed',
-        outputs: [],
-        log: [],
-        errorMessage,
-        errorCategory: 'unknown'
-      };
       const status = JSON.stringify({
-        status: 'failed',
-        jobId,
+        status: outcome.status,
+        jobId: outcome.jobId,
         retryable: false,
         attempts: currentAttempt + 1,
-        errorMessage,
+        errorMessage: outcome.errorMessage,
         updatedAt: new Date().toISOString()
       });
       const dead = JSON.stringify({
-        jobId,
-        errorMessage,
+        jobId: outcome.jobId,
+        status: outcome.status,
+        errorMessage: outcome.errorMessage,
+        errorCategory: outcome.errorCategory,
         retryable,
         attempts: currentAttempt + 1,
         failedAt: new Date().toISOString()
@@ -339,7 +340,7 @@ export function createRedisQueueAdapter(
       await evalScript(
         FAIL_SCRIPT,
         [CLAIM_KEY, INFLIGHT_KEY, RESULT_KEY, STATUS_KEY, DEAD_KEY],
-        [jobId, JSON.stringify(outcome), status, dead]
+        [outcome.jobId, JSON.stringify(outcome), status, dead]
       );
     },
 

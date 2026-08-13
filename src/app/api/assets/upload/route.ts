@@ -61,7 +61,7 @@ function inputsRoot(): string {
     .split(',')
     .map((value) => value.trim())
     .filter(Boolean);
-  return path.resolve(list[0] ?? '/var/lib/faceless-studio/inputs');
+  return path.resolve(/* turbopackIgnore: true */ list[0] ?? '/var/lib/faceless-studio/inputs');
 }
 
 function resolveMime(file: File): string {
@@ -120,7 +120,6 @@ export async function POST(request: Request) {
 
   return NextResponse.json({
     ok: true,
-    path: joined.resolved,
     relativePath: `${parsed.data.userId}/${parsed.data.projectId}/${sanitizedFilename}`,
     bytes: file.size,
     mime,

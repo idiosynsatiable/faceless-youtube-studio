@@ -2,10 +2,6 @@
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
-  experimental: {
-    typedRoutes: false,
-    instrumentationHook: true
-  },
   async headers() {
     return [
       {

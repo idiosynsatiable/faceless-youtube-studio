@@ -5,13 +5,13 @@
   "description": "Faceless YouTube Studio — AI-assisted market intelligence, faceless video production, compliance, upload preparation, analytics feedback, and monetization planning.",
   "license": "MIT",
   "engines": {
-    "node": ">=18.18.0"
+    "node": ">=20.9.0"
   },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
+    "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -26,18 +26,20 @@
   },
   "dependencies": {
     "@prisma/client": "5.22.0",
-    "next": "14.2.35",
-    "react": "18.3.1",
-    "react-dom": "18.3.1",
+    "next": "16.3.0",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
     "redis": "4.7.0",
     "zod": "3.23.8"
   },
   "devDependencies": {
     "@types/node": "20.14.0",
-    "@types/react": "18.3.3",
-    "@types/react-dom": "18.3.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
     "autoprefixer": "10.4.19",
-    "postcss": "8.4.41",
+    "eslint": "9.39.2",
+    "eslint-config-next": "16.3.0",
+    "postcss": "8.5.26",
     "prisma": "5.22.0",
     "tailwindcss": "3.4.10",
     "tsx": "4.16.5",

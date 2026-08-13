@@ -38,13 +38,22 @@ describe('worker queue adapter', () => {
     expect(await q.pop()).toBeNull();
   });
 
-  it('in-memory adapter records ack and nack outcomes', async () => {
+  it('in-memory adapter records terminal outcomes without losing rejected status', async () => {
     const q = new InMemoryQueueAdapter();
     await q.ack({ jobId: 'a', status: 'completed', outputs: [], log: [] });
-    await q.nack('b', 'oops', true);
+    await q.nack({
+      jobId: 'b',
+      status: 'rejected',
+      outputs: [],
+      log: ['render requires a visual asset'],
+      errorMessage: 'render requires a visual asset',
+      errorCategory: 'invalid_input_path'
+    }, false);
     expect(q.outcomes).toHaveLength(1);
     expect(q.failures).toHaveLength(1);
-    expect(q.failures[0].retryable).toBe(true);
+    expect(q.failures[0].retryable).toBe(false);
+    expect(q.failures[0].outcome.status).toBe('rejected');
+    expect(q.failures[0].outcome.errorMessage).toContain('visual asset');
   });
 
   it('unsupported adapter fails loudly when REDIS_URL is missing', async () => {

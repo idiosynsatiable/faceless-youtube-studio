@@ -10,7 +10,7 @@ const STATUS_KEY = 'faceless:jobs:status';
 const RESULT_KEY = 'faceless:jobs:result';
 
 function exposeOutcome(outcome: JobOutcome) {
-  const outputRoot = path.resolve(process.env.WORKER_OUTPUT_ROOT ?? '/var/lib/faceless-studio/exports');
+  const outputRoot = path.resolve(/* turbopackIgnore: true */ process.env.WORKER_OUTPUT_ROOT ?? '/var/lib/faceless-studio/exports');
   return {
     ...outcome,
     outputs: outcome.outputs.map((output) => {
@@ -23,7 +23,9 @@ function exposeOutcome(outcome: JobOutcome) {
         width: output.width,
         height: output.height,
         durationSeconds: output.durationSeconds,
-        downloadUrl: relativePath ? `/api/render/files?path=${encodeURIComponent(relativePath)}` : null
+        downloadUrl: relativePath
+          ? `/api/render/files?jobId=${encodeURIComponent(outcome.jobId)}&path=${encodeURIComponent(relativePath)}`
+          : null
       };
     })
   };
@@ -31,9 +33,9 @@ function exposeOutcome(outcome: JobOutcome) {
 
 export async function GET(
   _request: Request,
-  context: { params: { jobId: string } }
+  context: { params: Promise<{ jobId: string }> }
 ) {
-  const jobId = context.params.jobId;
+  const { jobId } = await context.params;
   if (!/^[A-Za-z0-9-]{8,120}$/.test(jobId)) {
     return NextResponse.json({ error: 'invalid_job_id' }, { status: 400 });
   }

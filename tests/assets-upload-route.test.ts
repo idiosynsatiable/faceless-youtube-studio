@@ -53,7 +53,7 @@ describe('POST /api/assets/upload', () => {
     expect((await res.json()).error).toBe('mime_not_allowed');
   });
 
-  it('writes an allowed file under the inputs allowlist and returns its path', async () => {
+  it('writes an allowed file under the inputs allowlist and returns a safe relative path', async () => {
     const payload = Buffer.from('FAKE-MP4');
     const route = await import('@/app/api/assets/upload/route');
     const res = await route.POST(
@@ -64,8 +64,9 @@ describe('POST /api/assets/upload', () => {
     expect(body.ok).toBe(true);
     expect(body.role).toBe('broll');
     expect(body.bytes).toBe(payload.byteLength);
-    expect(body.path.startsWith(tmpRoot)).toBe(true);
-    const onDisk = await fs.readFile(body.path);
+    expect(body.path).toBeUndefined();
+    expect(body.relativePath).toBe('user-1/proj-1/scene-1.mp4');
+    const onDisk = await fs.readFile(path.join(tmpRoot, body.relativePath));
     expect(onDisk.equals(payload)).toBe(true);
   });
 
