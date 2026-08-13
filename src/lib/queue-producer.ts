@@ -48,13 +48,13 @@ export class QueueDisabledError extends Error {
   }
 }
 
-export class InMemoryQueueProducer implements QueueProducer {
-  readonly enqueued: PipelineJobRequest[] = [];
+export class InMemoryQueueProducer<T extends PipelineJobRequest = UploadJobRequest> implements QueueProducer {
+  readonly enqueued: T[] = [];
   private closed = false;
 
   async enqueue(request: PipelineJobRequest): Promise<QueueEnqueueResult> {
     if (this.closed) throw new Error('producer closed');
-    this.enqueued.push({ ...request });
+    this.enqueued.push({ ...request } as T);
     return { enqueued: true, queueKey: 'memory:faceless:jobs:upload' };
   }
 
