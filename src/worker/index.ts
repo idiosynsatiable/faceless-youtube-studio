@@ -1,6 +1,7 @@
 // Worker entry point: Redis job -> hydrate -> FFmpeg render -> optional YouTube upload.
 
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { getPrisma } from '@/lib/db';
 import { decryptSecret } from '@/lib/crypto-vault';
 import {
@@ -222,7 +223,9 @@ function installShutdownHandlers(signal: { aborted: boolean }, log: (message: st
   }
 }
 
-if (require.main === module) {
+const invokedAs = process.argv[1] ? path.resolve(process.argv[1]) : '';
+const thisModule = path.resolve(fileURLToPath(import.meta.url));
+if (invokedAs && invokedAs === thisModule) {
   const signal = { aborted: false };
   const log = (message: string) => process.stdout.write(`${new Date().toISOString()} ${message}\n`);
   installShutdownHandlers(signal, log);
