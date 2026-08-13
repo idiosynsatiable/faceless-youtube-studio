@@ -68,7 +68,7 @@ function readInt(name: string, fallback: number, min: number, max: number): numb
 }
 
 function publishMode(value: string): AutonomyPublishMode {
-  return value === 'private' || value === 'unlisted' || value === 'public' ? value : 'public';
+  return value === 'private' || value === 'unlisted' || value === 'public' ? value : 'private';
 }
 
 export function loadConfig(): RuntimeConfig {
@@ -97,7 +97,7 @@ export function loadConfig(): RuntimeConfig {
       enabled: readBool('AUTONOMY_ENABLED', false),
       targetHandle: read('YOUTUBE_TARGET_HANDLE', '@idiosynsatiable'),
       targetChannelId: read('YOUTUBE_TARGET_CHANNEL_ID'),
-      publishMode: publishMode(read('AUTONOMY_PUBLISH_MODE', 'public')),
+      publishMode: publishMode(read('AUTONOMY_PUBLISH_MODE', 'private')),
       intervalMinutes: readInt('AUTONOMY_INTERVAL_MINUTES', 60, 15, 1440),
       maxUploadsPerDay: readInt('AUTONOMY_MAX_UPLOADS_PER_DAY', 2, 1, 8),
       minHoursBetweenUploads: readInt('AUTONOMY_MIN_HOURS_BETWEEN_UPLOADS', 6, 1, 48),
