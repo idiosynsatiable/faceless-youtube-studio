@@ -42,7 +42,14 @@ describe('youtube uploader', () => {
         scope: 'https://www.googleapis.com/auth/youtube.upload',
         token_type: 'Bearer'
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
-      // 2. init resumable
+      // 2. verify the refreshed credential still resolves to the approved channel
+      (url) => {
+        expect(url).toContain('youtube/v3/channels?mine=true');
+        return new Response(JSON.stringify({
+          items: [{ id: 'UC_IDIOSYNSATIABLE', snippet: { title: 'idiosynsatiable' } }]
+        }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+      },
+      // 3. init resumable
       (url) => {
         expect(url).toContain('/upload/youtube/v3/videos');
         return new Response('', {
@@ -50,7 +57,7 @@ describe('youtube uploader', () => {
           headers: { Location: 'https://upload.example/resumable/xyz' }
         });
       },
-      // 3. PUT
+      // 4. PUT
       (url) => {
         expect(url).toBe('https://upload.example/resumable/xyz');
         return new Response(JSON.stringify({
@@ -65,6 +72,7 @@ describe('youtube uploader', () => {
       {
         filePath: tmpFile,
         refreshToken: '1//refresh',
+        expectedChannelId: 'UC_IDIOSYNSATIABLE',
         title: 'Index funds explained',
         description: 'Educational only. Not financial advice.',
         tags: ['index funds', 'investing'],
@@ -92,6 +100,7 @@ describe('youtube uploader', () => {
       {
         filePath: tmpFile,
         refreshToken: '1//bad',
+        expectedChannelId: 'UC_IDIOSYNSATIABLE',
         title: 't',
         description: 'd',
         tags: [],
@@ -104,12 +113,39 @@ describe('youtube uploader', () => {
     if (!result.ok) expect(result.reason).toBe('refresh_failed');
   });
 
+  it('refuses to initialize an upload when the refreshed credential resolves to another channel', async () => {
+    const fetcher = mockFetch([
+      () => new Response(JSON.stringify({
+        access_token: 'ya29.fresh', expires_in: 3599, scope: 'https://www.googleapis.com/auth/youtube.upload', token_type: 'Bearer'
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
+      () => new Response(JSON.stringify({
+        items: [{ id: 'UC_OTHER_CHANNEL', snippet: { title: 'another channel' } }]
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    ]);
+    const mod = await import('@/worker/youtube-uploader');
+    const result = await mod.uploadVideoToYouTube(
+      {
+        filePath: tmpFile,
+        refreshToken: '1//refresh',
+        expectedChannelId: 'UC_IDIOSYNSATIABLE',
+        title: 't',
+        description: 'd',
+        tags: [],
+        categoryId: '27',
+        privacyStatus: 'private'
+      },
+      fetcher
+    );
+    expect(result).toMatchObject({ ok: false, reason: 'channel_verification_failed' });
+  });
+
   it('returns file_unreadable when the input file does not exist', async () => {
     const mod = await import('@/worker/youtube-uploader');
     const result = await mod.uploadVideoToYouTube(
       {
         filePath: '/tmp/does-not-exist-zzz.mp4',
         refreshToken: '1//refresh',
+        expectedChannelId: 'UC_IDIOSYNSATIABLE',
         title: 't',
         description: 'd',
         tags: [],

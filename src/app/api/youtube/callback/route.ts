@@ -3,14 +3,20 @@ import { config } from '@/lib/config';
 import { getPrisma } from '@/lib/db';
 import {
   exchangeAuthorizationCode,
-  getMyChannel,
+  verifyAuthorizedChannel,
   YouTubeClientError
 } from '@/lib/youtube-client';
+import { verifyOAuthState } from '@/lib/youtube-oauth';
 import { encryptSecret, CryptoVaultError } from '@/lib/crypto-vault';
 
 export const runtime = 'nodejs';
 
 const OPERATOR_EMAIL = process.env.OPERATOR_EMAIL ?? 'operator@faceless-studio.local';
+const UPLOAD_SCOPE = 'https://www.googleapis.com/auth/youtube.upload';
+
+function hasUploadScope(scope: string): boolean {
+  return scope.split(/\s+/).includes(UPLOAD_SCOPE);
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -23,11 +29,27 @@ export async function GET(request: Request) {
       { status: 503 }
     );
   }
+  if (!config.youtube.authorizedChannelId && !config.youtube.authorizedChannelHandle) {
+    return NextResponse.json(
+      {
+        ok: false,
+        reason: 'authorized_channel_not_configured',
+        detail: 'Set YOUTUBE_AUTHORIZED_CHANNEL_HANDLE or YOUTUBE_AUTHORIZED_CHANNEL_ID before connecting YouTube OAuth.'
+      },
+      { status: 503 }
+    );
+  }
   if (error) {
     return NextResponse.json({ ok: false, reason: 'oauth_error', detail: error }, { status: 400 });
   }
   if (!code || !state) {
     return NextResponse.json({ ok: false, reason: 'missing_parameters' }, { status: 400 });
+  }
+  if (!verifyOAuthState(state)) {
+    return NextResponse.json(
+      { ok: false, reason: 'invalid_oauth_state', detail: 'The OAuth request expired or did not originate from this studio.' },
+      { status: 400 }
+    );
   }
 
   // Step 1: exchange authorization code for tokens.
@@ -36,22 +58,31 @@ export async function GET(request: Request) {
     tokens = await exchangeAuthorizationCode(code);
   } catch (err) {
     const message = err instanceof YouTubeClientError ? err.message : 'token exchange failed';
-    const body = err instanceof YouTubeClientError ? err.body : undefined;
     return NextResponse.json(
-      { ok: false, reason: 'token_exchange_failed', detail: message, providerBody: body },
+      { ok: false, reason: 'token_exchange_failed', detail: message },
       { status: 502 }
     );
   }
+  if (!hasUploadScope(tokens.scope)) {
+    return NextResponse.json(
+      { ok: false, reason: 'required_scope_missing', detail: 'The granted consent did not include the YouTube upload scope.' },
+      { status: 403 }
+    );
+  }
 
-  // Step 2: identify which YouTube channel the operator just authorized.
+  // Step 2: resolve and lock the exact owner-approved YouTube identity before
+  // storing a long-lived credential. A valid Google account is not sufficient.
   let channelInfo;
   try {
-    channelInfo = await getMyChannel(tokens.accessToken);
+    channelInfo = await verifyAuthorizedChannel(tokens.accessToken, {
+      channelId: config.youtube.authorizedChannelId || undefined,
+      channelHandle: config.youtube.authorizedChannelHandle || undefined
+    });
   } catch (err) {
-    const message = err instanceof YouTubeClientError ? err.message : 'channel lookup failed';
+    const message = err instanceof YouTubeClientError ? err.message : 'channel verification failed';
     return NextResponse.json(
-      { ok: false, reason: 'channel_lookup_failed', detail: message },
-      { status: 502 }
+      { ok: false, reason: 'authorized_channel_mismatch', detail: message },
+      { status: 403 }
     );
   }
 
@@ -67,10 +98,8 @@ export async function GET(request: Request) {
     );
   }
 
-  // Step 4: persist. Single-tenant default — find-or-create one operator user
-  // and link the channel. Multi-tenant deployments should replace this section
-  // with a real session lookup that maps the OAuth `state` parameter back to
-  // a logged-in user.
+  // Step 4: persist a single, immutable owner channel binding. Multi-tenant
+  // deployments should replace the operator lookup with a signed user session.
   const prisma = getPrisma();
   if (!prisma) {
     return NextResponse.json(
@@ -94,10 +123,25 @@ export async function GET(request: Request) {
       }
     });
 
+    const ownerChannels = await prisma.channel.findMany({
+      where: { userId: user.id, oauthConnected: true },
+      select: { id: true, youtubeChannelId: true }
+    });
+    const conflicting = ownerChannels.find((channel) => channel.youtubeChannelId && channel.youtubeChannelId !== channelInfo.id);
+    if (conflicting) {
+      return NextResponse.json(
+        {
+          ok: false,
+          reason: 'authorized_channel_already_locked',
+          detail: 'This studio is already bound to a different YouTube channel. Clear the existing binding through an audited operator action before reconnecting.'
+        },
+        { status: 409 }
+      );
+    }
+
     const existing = await prisma.channel.findFirst({
       where: { userId: user.id, youtubeChannelId: channelInfo.id }
     });
-
     const channelData = {
       userId: user.id,
       youtubeChannelId: channelInfo.id,

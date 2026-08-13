@@ -6,6 +6,7 @@ export interface RuntimeConfig {
   databaseUrl: string;
   redisUrl: string;
   jwtSecret: string;
+  oauthStateSecret: string;
   ai: {
     provider: string;
     apiKey: string;
@@ -26,6 +27,8 @@ export interface RuntimeConfig {
     clientId: string;
     clientSecret: string;
     redirectUri: string;
+    authorizedChannelId: string;
+    authorizedChannelHandle: string;
   };
 }
 
@@ -34,18 +37,24 @@ function read(name: string, fallback = ''): string {
   return typeof value === 'string' ? value : fallback;
 }
 
+function normalizeYouTubeHandle(value: string): string {
+  return value.trim().replace(/^@/, '').toLowerCase();
+}
+
 export function loadConfig(): RuntimeConfig {
   const stripeSecret = read('STRIPE_SECRET_KEY');
   const stripeWebhook = read('STRIPE_WEBHOOK_SECRET');
   const ytClientId = read('YOUTUBE_CLIENT_ID');
   const ytClientSecret = read('YOUTUBE_CLIENT_SECRET');
+  const jwtSecret = read('JWT_SECRET', 'change_me_with_secure_local_secret');
   const aiKey = read('OPENAI_API_KEY');
 
   return {
     appUrl: read('NEXT_PUBLIC_APP_URL', 'http://localhost:3000'),
     databaseUrl: read('DATABASE_URL'),
     redisUrl: read('REDIS_URL'),
-    jwtSecret: read('JWT_SECRET', 'change_me_with_secure_local_secret'),
+    jwtSecret,
+    oauthStateSecret: read('OAUTH_STATE_SECRET', jwtSecret),
     ai: {
       provider: read('AI_PROVIDER', 'openai'),
       apiKey: aiKey,
@@ -65,7 +74,9 @@ export function loadConfig(): RuntimeConfig {
       enabled: ytClientId.length > 0 && ytClientSecret.length > 0,
       clientId: ytClientId,
       clientSecret: ytClientSecret,
-      redirectUri: read('YOUTUBE_REDIRECT_URI', 'http://localhost:3000/api/youtube/callback')
+      redirectUri: read('YOUTUBE_REDIRECT_URI', 'http://localhost:3000/api/youtube/callback'),
+      authorizedChannelId: read('YOUTUBE_AUTHORIZED_CHANNEL_ID').trim(),
+      authorizedChannelHandle: normalizeYouTubeHandle(read('YOUTUBE_AUTHORIZED_CHANNEL_HANDLE'))
     }
   };
 }

@@ -1,20 +1,16 @@
 // YouTube resumable video upload — pure fetch, no googleapis dependency.
 //
-// Two-step flow per https://developers.google.com/youtube/v3/docs/videos/insert
-// "Resumable uploads":
-// 1. POST to /upload/youtube/v3/videos?uploadType=resumable&part=snippet,status
-//    with JSON metadata body. Response carries the upload URL in the
-//    Location header.
-// 2. PUT the file bytes to that URL with the correct Content-Type. We do a
-//    single-shot PUT for files up to a configurable size (default 200 MB).
-//    For larger files, operators should switch to chunked transfer; the
-//    architecture supports it but we keep the scaffold simple.
-//
-// The worker refreshes the access token using the channel's stored refresh
-// token immediately before initiating the upload to minimize 401s.
+// The worker refreshes the access token and verifies that it resolves to the
+// owner-approved channel immediately before upload. This is the final fail-closed
+// control: valid credentials for a different account are never enough to publish.
 
 import fs from 'node:fs/promises';
-import { refreshAccessToken, type FetchLike, YouTubeClientError } from '@/lib/youtube-client';
+import {
+  refreshAccessToken,
+  verifyAuthorizedChannel,
+  type FetchLike,
+  YouTubeClientError
+} from '@/lib/youtube-client';
 
 const INIT_URL = 'https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status';
 const MAX_SINGLE_PUT_BYTES = 200 * 1024 * 1024;
@@ -24,6 +20,8 @@ export type UploadPrivacyStatus = 'private' | 'unlisted' | 'public';
 export interface YouTubeUploadInput {
   filePath: string;
   refreshToken: string;
+  expectedChannelId: string;
+  expectedChannelHandle?: string;
   title: string;
   description: string;
   tags: string[];
@@ -44,6 +42,7 @@ export interface YouTubeUploadFailure {
   ok: false;
   reason:
     | 'refresh_failed'
+    | 'channel_verification_failed'
     | 'init_failed'
     | 'init_no_location'
     | 'put_failed'
@@ -90,7 +89,24 @@ export async function uploadVideoToYouTube(
     };
   }
 
-  // Step 2: initiate resumable upload — POST metadata, capture Location header.
+  // Step 2: verify the refresh token still resolves to the same owner-approved
+  // channel that was bound during OAuth. Abort before any upload request on a
+  // mismatch, even if the credential itself is otherwise valid.
+  try {
+    await verifyAuthorizedChannel(accessToken, {
+      channelId: input.expectedChannelId,
+      channelHandle: input.expectedChannelHandle
+    }, fetchImpl);
+  } catch (err) {
+    return {
+      ok: false,
+      reason: 'channel_verification_failed',
+      detail: err instanceof YouTubeClientError ? err.message : 'channel verification failed',
+      status: err instanceof YouTubeClientError ? err.status : undefined
+    };
+  }
+
+  // Step 3: initiate resumable upload — POST metadata, capture Location header.
   const contentType = input.contentType ?? 'video/mp4';
   const body = JSON.stringify({
     snippet: {
@@ -130,7 +146,7 @@ export async function uploadVideoToYouTube(
     return { ok: false, reason: 'init_no_location', detail: 'YouTube did not return an upload URL' };
   }
 
-  // Step 3: PUT the file bytes.
+  // Step 4: PUT the file bytes.
   const putRes = await fetchImpl(uploadUrl, {
     method: 'PUT',
     headers: {

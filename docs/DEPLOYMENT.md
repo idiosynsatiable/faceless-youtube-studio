@@ -28,7 +28,7 @@ A worker process consumes the Redis queue for FFmpeg assembly, YouTube uploads, 
 
 ## Env vars
 
-See `.env.example`. Disabled-safe defaults apply when YouTube, Stripe, or AI keys are absent.
+See `.env.example`. Disabled-safe defaults apply when YouTube, Stripe, or AI keys are absent. For owner-authorized YouTube publishing, follow [`YOUTUBE_CHANNEL_AUTHORIZATION.md`](./YOUTUBE_CHANNEL_AUTHORIZATION.md) before enabling OAuth or the worker upload queue.
 
 ## Monitoring
 

@@ -3,6 +3,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { getPrisma } from '@/lib/db';
+import { config as runtimeConfig } from '@/lib/config';
 import { decryptSecret } from '@/lib/crypto-vault';
 import {
   isRenderJobRequest,
@@ -103,10 +104,25 @@ async function renderRequest(
   const channel = project?.channelId
     ? await prisma.channel.findUnique({ where: { id: project.channelId } })
     : null;
-  if (!channel || !channel.oauthConnected || !channel.oauthRefreshTokenCipher) {
+  if (!channel || !channel.oauthConnected || !channel.oauthRefreshTokenCipher || !channel.youtubeChannelId) {
     return {
       ...assemblyOutcome,
-      log: [...assemblyOutcome.log, 'youtube upload skipped: channel not connected']
+      status: 'failed',
+      errorMessage: 'owner-authorized YouTube channel is not connected',
+      errorCategory: 'unknown',
+      log: [...assemblyOutcome.log, 'youtube upload refused: channel binding is missing or incomplete']
+    };
+  }
+  if (
+    runtimeConfig.youtube.authorizedChannelId &&
+    channel.youtubeChannelId !== runtimeConfig.youtube.authorizedChannelId
+  ) {
+    return {
+      ...assemblyOutcome,
+      status: 'failed',
+      errorMessage: 'stored channel does not match the configured owner-authorized channel',
+      errorCategory: 'unknown',
+      log: [...assemblyOutcome.log, 'youtube upload refused: configured channel-id mismatch']
     };
   }
 
@@ -133,6 +149,8 @@ async function renderRequest(
   const upload = await uploadVideoToYouTube({
     filePath: master.absolutePath,
     refreshToken,
+    expectedChannelId: channel.youtubeChannelId,
+    expectedChannelHandle: runtimeConfig.youtube.authorizedChannelHandle || undefined,
     title: metadataJson?.title ?? project?.title ?? 'untitled',
     description: metadataJson?.description ?? '',
     tags: metadataJson?.tags ?? [],
