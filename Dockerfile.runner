@@ -3,7 +3,7 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini \
+  && apt-get install -y --no-install-recommends ffmpeg openssl ca-certificates tini \
   && rm -rf /var/lib/apt/lists/*
 
 FROM base AS deps
