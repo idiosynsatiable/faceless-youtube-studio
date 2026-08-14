@@ -1,0 +1,33 @@
+FROM node:20-bookworm-slim AS base
+WORKDIR /app
+ENV NEXT_TELEMETRY_DISABLED=1
+
+# The controller generates narration assets and probes/concatenates audio before
+# queueing work for the renderer, so it needs ffmpeg/ffprobe too.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini \
+  && rm -rf /var/lib/apt/lists/*
+
+FROM base AS deps
+COPY package.json ./
+RUN npm install --no-audit --no-fund
+
+FROM base AS runner
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json tsconfig.json ./
+COPY src ./src
+COPY prisma ./prisma
+
+RUN useradd --system --uid 10002 --no-create-home --shell /usr/sbin/nologin autonomy \
+  && mkdir -p /var/lib/faceless-studio/inputs /var/lib/faceless-studio/exports \
+  && chown -R autonomy:autonomy /var/lib/faceless-studio /app
+
+USER autonomy
+
+ENV NODE_ENV=production \
+    WORKER_INPUT_ALLOWLIST=/var/lib/faceless-studio/inputs \
+    WORKER_OUTPUT_ROOT=/var/lib/faceless-studio/exports \
+    FFMPEG_BINARY=/usr/bin/ffmpeg
+
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "--enable-source-maps", "node_modules/.bin/tsx", "src/autonomy/index.ts"]
