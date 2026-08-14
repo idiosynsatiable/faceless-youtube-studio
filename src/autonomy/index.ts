@@ -22,6 +22,7 @@ import { runCompliance, type ComplianceReport } from '@/lib/compliance-engine';
 import { generateStoryboard } from '@/lib/storyboard-engine';
 import { refreshAccessToken, verifyTargetChannel } from '@/lib/youtube-client';
 import { fetchMostPopularVideos, type PopularVideoSignal } from '@/lib/youtube-trends';
+import { fetchVideoPerformance } from '@/lib/youtube-performance';
 import { getQueueProducer } from '@/lib/queue-producer';
 import { initializeRedisQueueProducer, shutdownRedisQueueProducer } from '@/queue/redis-bootstrap';
 import { writeGeneratedVisuals } from '@/worker/generated-visuals';
@@ -30,6 +31,7 @@ import { writeNarrationAssets } from '@/worker/narration-assets';
 const DAY_MS = 24 * 60 * 60 * 1000;
 const HOUR_MS = 60 * 60 * 1000;
 const RECENT_TOPIC_DAYS = 21;
+const PERFORMANCE_SNAPSHOT_HOURS = 6;
 const OPERATOR_EMAIL = process.env.OPERATOR_EMAIL ?? 'operator@faceless-studio.local';
 const INPUT_ROOT = path.resolve((process.env.WORKER_INPUT_ALLOWLIST ?? '/var/lib/faceless-studio/inputs').split(',')[0] || '/var/lib/faceless-studio/inputs');
 
@@ -133,7 +135,13 @@ function sanitizeDossier(raw: DossierPayload): ResearchDossier {
   };
 }
 
-async function discoverCandidates(signals: PopularVideoSignal[], niche: string, region: string, language: string): Promise<LiveTrendCandidate[]> {
+async function discoverCandidates(
+  signals: PopularVideoSignal[],
+  niche: string,
+  region: string,
+  language: string,
+  performanceContext: string
+): Promise<LiveTrendCandidate[]> {
   const compactSignals = signals.slice(0, 20).map((video) => ({
     title: video.title,
     channel: video.channelTitle,
@@ -147,6 +155,9 @@ async function discoverCandidates(signals: PopularVideoSignal[], niche: string, 
   const prompt = `You are the trend-intelligence layer for an autonomous, policy-safe faceless YouTube channel. Channel niche: ${niche}. Region: ${region}. Language: ${language}.
 
 YouTube's official mostPopular feed currently contains these signals: ${JSON.stringify(compactSignals)}.
+
+Recent performance from this channel's own published videos is below. Treat it only as a soft audience-fit signal. Video ages and exposure differ, so do not compare raw view counts as if every upload had equal opportunity. Do not copy prior titles, topics, hooks, or scripts merely because they performed well. Use the signal to learn audience interests while preserving novelty and source quality.
+${performanceContext || 'No reliable owned-video performance signal is available yet.'}
 
 Use web search to validate what is actually rising now and return 3 to 6 topic-level opportunities, not copies of individual videos. Favor explanatory, technology, science, culture, creator-economy, engineering, software, product, history, and high-curiosity informational angles that can be covered with original generated visuals. Exclude political persuasion, elections, breaking tragedy, graphic crime, medical or financial advice, sexual content, regulated goods, minors-focused controversy, celebrity rumor, fabricated urgency, and any concept that depends on reusing copyrighted clips. Every candidate needs at least two independent HTTP source URLs when possible. Do not invent statistics or citations.
 
@@ -171,6 +182,68 @@ async function recentTopics(prisma: NonNullable<ReturnType<typeof getPrisma>>, u
     select: { topic: true }
   });
   return new Set(records.map((item) => normalizeTopic(item.topic)).filter(Boolean));
+}
+
+async function refreshPerformanceContext(
+  prisma: NonNullable<ReturnType<typeof getPrisma>>,
+  userId: string,
+  channelId: string,
+  accessToken: string
+): Promise<string> {
+  const recent = await prisma.uploadJob.findMany({
+    where: { userId, youtubeVideoId: { not: null } },
+    orderBy: { updatedAt: 'desc' },
+    take: 12,
+    select: {
+      youtubeVideoId: true,
+      videoProjectId: true,
+      updatedAt: true,
+      videoProject: { select: { title: true } }
+    }
+  });
+  const videoIds = recent.flatMap((row) => row.youtubeVideoId ? [row.youtubeVideoId] : []);
+  if (videoIds.length === 0) return 'No previously published owned videos are available for performance feedback yet.';
+
+  const stats = await fetchVideoPerformance(accessToken, videoIds);
+  if (stats.length === 0) return 'Owned-video statistics were unavailable this cycle; do not infer performance.';
+  const byId = new Map(stats.map((stat) => [stat.id, stat]));
+  const now = Date.now();
+  const lines: string[] = [];
+
+  for (const row of recent) {
+    if (!row.youtubeVideoId) continue;
+    const stat = byId.get(row.youtubeVideoId);
+    if (!stat) continue;
+
+    const latest = await prisma.analyticsSnapshot.findFirst({
+      where: { videoProjectId: row.videoProjectId },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true }
+    });
+    if (!latest || now - latest.createdAt.getTime() >= PERFORMANCE_SNAPSHOT_HOURS * HOUR_MS) {
+      await prisma.analyticsSnapshot.create({
+        data: {
+          userId,
+          channelId,
+          videoProjectId: row.videoProjectId,
+          views: stat.viewCount,
+          likes: stat.likeCount,
+          comments: stat.commentCount
+        }
+      });
+    }
+
+    const publishedMs = stat.publishedAt ? Date.parse(stat.publishedAt) : row.updatedAt.getTime();
+    const ageHours = Math.max(0, Math.round((now - (Number.isFinite(publishedMs) ? publishedMs : row.updatedAt.getTime())) / HOUR_MS));
+    const engagementRate = stat.viewCount > 0
+      ? ((stat.likeCount + stat.commentCount) / stat.viewCount) * 100
+      : 0;
+    lines.push(
+      `- ${row.videoProject.title}: age ${ageHours}h, ${stat.viewCount} views, ${stat.likeCount} likes, ${stat.commentCount} comments, ${engagementRate.toFixed(2)}% visible engagement.`
+    );
+  }
+
+  return lines.slice(0, 8).join('\n') || 'Owned-video statistics were unavailable this cycle; do not infer performance.';
 }
 
 async function cadenceBlocker(prisma: NonNullable<ReturnType<typeof getPrisma>>, userId: string): Promise<string | null> {
@@ -331,10 +404,25 @@ export async function runAutonomyTick(): Promise<AutonomyTickResult> {
 
   const region = /^[A-Za-z]{2}$/.test(channel.regionFocus) ? channel.regionFocus.toUpperCase() : 'US';
   const language = channel.language || 'en';
+  const performanceContext = await refreshPerformanceContext(
+    prisma,
+    user.id,
+    channel.id,
+    refreshed.accessToken
+  ).catch((err) => {
+    log(`performance feedback unavailable this cycle: ${err instanceof Error ? err.message : String(err)}`);
+    return 'Owned-video performance feedback failed this cycle; do not infer or fabricate it.';
+  });
   const popular = await fetchMostPopularVideos(refreshed.accessToken, region, 25);
   if (popular.length === 0) return { status: 'skipped', reason: 'YouTube mostPopular returned no trend signals' };
 
-  const candidates = await discoverCandidates(popular, channel.niche || 'general informational', region, language);
+  const candidates = await discoverCandidates(
+    popular,
+    channel.niche || 'general informational',
+    region,
+    language,
+    performanceContext
+  );
   if (candidates.length === 0) return { status: 'skipped', reason: 'trend discovery returned no usable candidates' };
   const seen = await recentTopics(prisma, user.id);
   const ranked = candidates
