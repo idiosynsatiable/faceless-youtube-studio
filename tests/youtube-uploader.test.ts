@@ -33,7 +33,7 @@ function mockFetch(handlers: Array<(url: string, init?: RequestInit) => Response
 }
 
 describe('youtube uploader', () => {
-  it('refreshes the token, initiates a resumable upload, and PUTs the file', async () => {
+  it('refreshes the token, initiates a resumable upload, discloses synthetic media, and PUTs the file', async () => {
     const fetcher = mockFetch([
       // 1. refresh
       () => new Response(JSON.stringify({
@@ -43,8 +43,10 @@ describe('youtube uploader', () => {
         token_type: 'Bearer'
       }), { status: 200, headers: { 'Content-Type': 'application/json' } }),
       // 2. init resumable
-      (url) => {
+      (url, init) => {
         expect(url).toContain('/upload/youtube/v3/videos');
+        const metadata = JSON.parse(String(init?.body)) as { status?: { containsSyntheticMedia?: boolean } };
+        expect(metadata.status?.containsSyntheticMedia).toBe(true);
         return new Response('', {
           status: 200,
           headers: { Location: 'https://upload.example/resumable/xyz' }
@@ -69,7 +71,8 @@ describe('youtube uploader', () => {
         description: 'Educational only. Not financial advice.',
         tags: ['index funds', 'investing'],
         categoryId: '27',
-        privacyStatus: 'private'
+        privacyStatus: 'private',
+        containsSyntheticMedia: true
       },
       fetcher
     );
