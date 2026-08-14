@@ -3,8 +3,8 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 
 FROM base AS deps
-COPY package.json ./
-RUN npm install --no-audit --no-fund
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
 
 FROM base AS build
 COPY --from=deps /app/node_modules ./node_modules
@@ -20,6 +20,9 @@ COPY --from=build /app/.next ./.next
 COPY --from=build /app/public ./public
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package.json ./package.json
+COPY --from=build /app/tsconfig.json ./tsconfig.json
 COPY --from=build /app/prisma ./prisma
+COPY --from=build /app/src ./src
+COPY --from=build /app/scripts ./scripts
 EXPOSE 3000
-CMD ["npm", "start"]
+CMD ["npm", "run", "start:railway"]

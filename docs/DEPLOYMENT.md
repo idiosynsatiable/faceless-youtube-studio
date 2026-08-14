@@ -1,5 +1,9 @@
 # Deployment
 
+## Railway
+
+For Railway, follow [`RAILWAY_DEPLOYMENT.md`](./RAILWAY_DEPLOYMENT.md). The current filesystem-based FFmpeg pipeline runs the web process and one worker inside the same persistent `studio` service so both use one durable media volume; PostgreSQL and Redis remain managed Railway services.
+
 ## Vercel
 
 The app is Next.js App Router. To deploy on Vercel:
