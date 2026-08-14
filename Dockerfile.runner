@@ -3,7 +3,7 @@ WORKDIR /app
 ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ffmpeg ca-certificates dumb-init tini \
+  && apt-get install -y --no-install-recommends ffmpeg ca-certificates tini \
   && rm -rf /var/lib/apt/lists/*
 
 FROM base AS deps
@@ -18,18 +18,18 @@ COPY package.json tsconfig.json ./
 COPY src ./src
 COPY prisma ./prisma
 
-RUN useradd --system --uid 10001 --no-create-home --shell /usr/sbin/nologin worker \
+RUN useradd --system --uid 10003 --no-create-home --shell /usr/sbin/nologin media \
   && mkdir -p /var/lib/faceless-studio/inputs /var/lib/faceless-studio/exports \
-  && chown -R worker:worker /var/lib/faceless-studio /app
+  && chown -R media:media /var/lib/faceless-studio /app
 
-USER worker
+USER media
 
 ENV NODE_ENV=production \
-    WORKER_OUTPUT_ROOT=/var/lib/faceless-studio/exports \
     WORKER_INPUT_ALLOWLIST=/var/lib/faceless-studio/inputs \
+    WORKER_OUTPUT_ROOT=/var/lib/faceless-studio/exports \
     FFMPEG_BINARY=/usr/bin/ffmpeg \
     WORKER_CONCURRENCY=1 \
     WORKER_JOB_TIMEOUT_MS=900000
 
 ENTRYPOINT ["/usr/bin/tini", "--"]
-CMD ["node", "--enable-source-maps", "node_modules/.bin/tsx", "src/worker/index.ts"]
+CMD ["node", "--enable-source-maps", "node_modules/.bin/tsx", "src/runner/index.ts"]

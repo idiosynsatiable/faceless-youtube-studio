@@ -1,14 +1,4 @@
-// Hydrates an UploadJobRequest popped from the queue into a full AssemblyJob
-// the runner can consume.
-//
-// Steps:
-// 1. Look up the VideoProject by ID and confirm ownership.
-// 2. Generate the AssemblyPlan from the project's title and storyboard.
-// 3. Discover input assets on disk under WORKER_INPUT_ALLOWLIST/<userId>/<projectId>/.
-// 4. Infer each asset's logical role from its file extension.
-//
-// The worker calls this once per job, then passes the resulting AssemblyJob
-// to runAssemblyJob.
+// Hydrates an UploadJobRequest popped from the queue into a full AssemblyJob.
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -25,6 +15,7 @@ export interface HydratorDeps {
         userId: string;
         title: string;
         storyboardJson: unknown;
+        metadataJson: unknown;
       } | null>;
     };
   };
@@ -51,30 +42,12 @@ const DEFAULT_FS = {
 };
 
 function inferRole(filename: string): AssetInput['role'] {
-  const ext = filename.split('.').pop()?.toLowerCase() ?? '';
-  switch (ext) {
-    case 'wav':
-    case 'mp3':
-    case 'm4a':
-    case 'aac':
-    case 'flac':
-      return 'narration';
-    case 'mp4':
-    case 'mov':
-    case 'webm':
-    case 'mkv':
-      return 'broll';
-    case 'srt':
-    case 'vtt':
-      return 'caption_track';
-    case 'jpg':
-    case 'jpeg':
-    case 'png':
-    case 'webp':
-      return 'thumbnail_still';
-    default:
-      return 'broll';
-  }
+  const lower = filename.toLowerCase();
+  if (/\.(srt|vtt)$/.test(lower)) return 'caption_track';
+  if (/\.(mp4|mov|webm|mkv)$/.test(lower)) return 'broll';
+  if (/\.(jpg|jpeg|png|webp)$/.test(lower)) return 'thumbnail_still';
+  if (/\.(wav|mp3|m4a|aac|flac)$/.test(lower)) return /(music|score|bed)/.test(lower) ? 'music' : 'narration';
+  return 'broll';
 }
 
 function inputsRootFor(config: WorkerConfig): string {
@@ -91,68 +64,62 @@ function storyboardSceneCount(json: unknown): number {
   return 8;
 }
 
-export async function hydrateUploadRequest(
-  request: UploadJobRequest,
-  deps: HydratorDeps
-): Promise<HydrationResult> {
+function productionSettings(json: unknown): { durationMinutes: number; shortsCount: number } {
+  if (!json || typeof json !== 'object') return { durationMinutes: 8, shortsCount: 3 };
+  const settings = (json as { production?: { durationMinutes?: unknown; shortsCount?: unknown } }).production;
+  const duration = Number(settings?.durationMinutes ?? 8);
+  const shorts = Number(settings?.shortsCount ?? 3);
+  return {
+    durationMinutes: Number.isFinite(duration) ? Math.max(1, Math.min(60, duration)) : 8,
+    shortsCount: Number.isFinite(shorts) ? Math.max(0, Math.min(10, Math.round(shorts))) : 3
+  };
+}
+
+export async function hydrateUploadRequest(request: UploadJobRequest, deps: HydratorDeps): Promise<HydrationResult> {
   const project = await deps.prisma.videoProject.findUnique({ where: { id: request.videoProjectId } });
-  if (!project) {
-    return { ok: false, reason: 'project_not_found', videoProjectId: request.videoProjectId };
-  }
+  if (!project) return { ok: false, reason: 'project_not_found', videoProjectId: request.videoProjectId };
 
   const root = inputsRootFor(deps.config);
   const projectDir = path.join(root, project.userId, project.id);
   const fsImpl = deps.fsImpl ?? DEFAULT_FS;
-
   let entries: string[];
   try {
     entries = await fsImpl.readdir(projectDir);
   } catch (err) {
-    return {
-      ok: false,
-      reason: 'inputs_dir_unreadable',
-      detail: err instanceof Error ? err.message : `cannot read ${projectDir}`
-    };
+    return { ok: false, reason: 'inputs_dir_unreadable', detail: err instanceof Error ? err.message : `cannot read ${projectDir}` };
   }
 
   const inputs: AssetInput[] = [];
   for (const name of entries) {
     if (name.startsWith('.')) continue;
     const abs = path.join(projectDir, name);
-    let stat;
     try {
-      stat = await fsImpl.stat(abs);
+      const stat = await fsImpl.stat(abs);
+      if (!stat.isFile() || stat.size === 0) continue;
+      inputs.push({ path: abs, role: inferRole(name), license: name.startsWith('generated-') ? 'original-generated-asset' : 'operator-attested' });
     } catch {
-      continue;
+      // Ignore files that disappear between directory scan and stat.
     }
-    if (!stat.isFile() || stat.size === 0) continue;
-    inputs.push({ path: abs, role: inferRole(name), license: 'operator-attested' });
   }
+  if (inputs.length === 0) return { ok: false, reason: 'no_inputs', lookedAt: projectDir };
 
-  if (inputs.length === 0) {
-    return { ok: false, reason: 'no_inputs', lookedAt: projectDir };
-  }
-
-  const scenesTarget = storyboardSceneCount(project.storyboardJson);
+  const settings = productionSettings(project.metadataJson);
   const plan = planVideoAssembly({
     title: project.title,
-    durationMinutes: 8,
-    shortsCount: 3,
-    storyboardScenes: scenesTarget,
+    durationMinutes: settings.durationMinutes,
+    shortsCount: settings.shortsCount,
+    storyboardScenes: storyboardSceneCount(project.storyboardJson),
     style: 'cinematic-clean'
   });
 
-  const job: AssemblyJob = {
-    id: request.id,
-    scope: {
-      userId: project.userId,
-      projectId: project.id,
-      baseFilename: safeFilename(project.title, 'video-package')
-    },
-    plan,
-    inputs,
-    enqueuedAt: request.enqueuedAt
+  return {
+    ok: true,
+    job: {
+      id: request.id,
+      scope: { userId: project.userId, projectId: project.id, baseFilename: safeFilename(project.title, 'video-package') },
+      plan,
+      inputs,
+      enqueuedAt: request.enqueuedAt
+    }
   };
-
-  return { ok: true, job };
 }
