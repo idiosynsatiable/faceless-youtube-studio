@@ -22,7 +22,8 @@
     "scan:secrets": "bash scripts/scan-secrets.sh",
     "scan:placeholders": "bash scripts/scan-placeholders.sh",
     "verify": "bash scripts/verify-studio.sh",
-    "worker": "tsx src/worker/index.ts"
+    "worker": "tsx src/worker/index.ts",
+    "autonomy": "tsx src/autonomy/index.ts"
   },
   "dependencies": {
     "@prisma/client": "5.22.0",
