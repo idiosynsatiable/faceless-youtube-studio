@@ -10,7 +10,7 @@ function fetcher(response: Response, inspect?: (url: string, init?: RequestInit)
 }
 
 describe('YouTube recent-video performance', () => {
-  it('fetches official statistics for owned video ids', async () => {
+  it('fetches official statistics for owned video ids with a valid id-filter request', async () => {
     const response = new Response(JSON.stringify({
       items: [{
         id: 'video-1',
@@ -22,6 +22,7 @@ describe('YouTube recent-video performance', () => {
     const rows = await fetchVideoPerformance('token', ['video-1', 'video-1'], fetcher(response, (url, init) => {
       expect(url).toContain('part=snippet%2Cstatistics');
       expect(url).toContain('id=video-1');
+      expect(url).not.toContain('maxResults');
       expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer token');
     }));
 
