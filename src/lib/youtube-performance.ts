@@ -50,10 +50,10 @@ export async function fetchVideoPerformance(
 ): Promise<VideoPerformance[]> {
   const ids = [...new Set(videoIds.map((id) => id.trim()).filter(Boolean))].slice(0, 50);
   if (ids.length === 0) return [];
+  // YouTube videos.list does not support maxResults together with the id filter.
   const params = new URLSearchParams({
     part: 'snippet,statistics',
-    id: ids.join(','),
-    maxResults: String(ids.length)
+    id: ids.join(',')
   });
   const res = await fetchImpl(`${VIDEOS_URL}?${params.toString()}`, {
     headers: { Authorization: `Bearer ${accessToken}` }
