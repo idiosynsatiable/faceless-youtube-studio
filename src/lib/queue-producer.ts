@@ -1,5 +1,7 @@
 // Queue producer shared by render-only and YouTube publish jobs.
 
+export type UploadAuthorization = 'user_confirmed' | 'owner_autopilot';
+
 export interface UploadJobRequest {
   kind?: 'upload';
   id: string;
@@ -8,7 +10,7 @@ export interface UploadJobRequest {
   privacyStatus: 'private' | 'unlisted' | 'public';
   scheduledAt?: string;
   enqueuedAt: string;
-  authorization: 'user_confirmed';
+  authorization: UploadAuthorization;
 }
 
 export interface RenderJobRequest {
