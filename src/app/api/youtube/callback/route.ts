@@ -4,6 +4,7 @@ import { getPrisma } from '@/lib/db';
 import {
   exchangeAuthorizationCode,
   getMyChannel,
+  verifyTargetChannel,
   YouTubeClientError
 } from '@/lib/youtube-client';
 import { encryptSecret, CryptoVaultError } from '@/lib/crypto-vault';
@@ -30,7 +31,6 @@ export async function GET(request: Request) {
     return NextResponse.json({ ok: false, reason: 'missing_parameters' }, { status: 400 });
   }
 
-  // Step 1: exchange authorization code for tokens.
   let tokens;
   try {
     tokens = await exchangeAuthorizationCode(code);
@@ -43,10 +43,26 @@ export async function GET(request: Request) {
     );
   }
 
-  // Step 2: identify which YouTube channel the operator just authorized.
   let channelInfo;
   try {
     channelInfo = await getMyChannel(tokens.accessToken);
+    const lock = await verifyTargetChannel(
+      tokens.accessToken,
+      config.autonomy.targetHandle,
+      config.autonomy.targetChannelId
+    );
+    if (!lock.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          reason: 'target_channel_mismatch',
+          detail: `Authorized channel ${lock.mine.title} (${lock.mine.id}) does not match ${config.autonomy.targetHandle}.`,
+          authenticatedChannelId: lock.mine.id,
+          expectedChannelId: lock.target.id
+        },
+        { status: 403 }
+      );
+    }
   } catch (err) {
     const message = err instanceof YouTubeClientError ? err.message : 'channel lookup failed';
     return NextResponse.json(
@@ -55,7 +71,6 @@ export async function GET(request: Request) {
     );
   }
 
-  // Step 3: encrypt the refresh token at rest.
   let encrypted;
   try {
     encrypted = encryptSecret(tokens.refreshToken);
@@ -67,10 +82,6 @@ export async function GET(request: Request) {
     );
   }
 
-  // Step 4: persist. Single-tenant default — find-or-create one operator user
-  // and link the channel. Multi-tenant deployments should replace this section
-  // with a real session lookup that maps the OAuth `state` parameter back to
-  // a logged-in user.
   const prisma = getPrisma();
   if (!prisma) {
     return NextResponse.json(
