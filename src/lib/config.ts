@@ -87,8 +87,8 @@ export function loadConfig(): RuntimeConfig {
       provider: read('AI_PROVIDER', 'openai'),
       apiKey: aiKey,
       enabled: aiKey.length > 0,
-      model: read('OPENAI_AUTONOMY_MODEL', 'gpt-5.6-terra'),
-      imageModel: read('OPENAI_IMAGE_MODEL', 'gpt-image-2'),
+      model: read('OPENAI_AUTONOMY_MODEL', 'gpt-5.1'),
+      imageModel: read('OPENAI_IMAGE_MODEL', 'gpt-image-1'),
       ttsModel: read('OPENAI_TTS_MODEL', 'tts-1-hd'),
       ttsVoice: read('OPENAI_TTS_VOICE', 'onyx'),
       videoModel: read('OPENAI_VIDEO_MODEL', 'sora-2-pro')
