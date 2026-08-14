@@ -144,6 +144,7 @@ async function renderRequest(
   const description = metadataJson?.description ?? '';
   const tags = metadataJson?.tags ?? [];
   const categoryId = (metadataJson?.categoryRecommendation ?? '27').split(' ')[0];
+  const isAutonomous = uploadRequest.authorization === 'owner_autopilot';
 
   const existingUpload = await prisma.uploadJob.findUnique({ where: { id: uploadRequest.id } });
   let mainVideoId = existingUpload?.youtubeVideoId ?? null;
@@ -158,7 +159,8 @@ async function renderRequest(
       tags,
       categoryId,
       privacyStatus: uploadRequest.privacyStatus,
-      scheduledAt: uploadRequest.scheduledAt
+      scheduledAt: uploadRequest.scheduledAt,
+      containsSyntheticMedia: isAutonomous
     });
 
     if (!upload.ok) {
@@ -201,7 +203,7 @@ async function renderRequest(
   }
 
   if (
-    uploadRequest.authorization === 'owner_autopilot' &&
+    isAutonomous &&
     runtimeConfig.autonomy.uploadShorts &&
     project?.userId &&
     project.channelId
@@ -241,7 +243,8 @@ async function renderRequest(
         tags: short.tags,
         categoryId,
         privacyStatus: short.privacyStatus,
-        scheduledAt: short.scheduledAt
+        scheduledAt: short.scheduledAt,
+        containsSyntheticMedia: true
       });
 
       if (!shortUpload.ok) {
@@ -285,7 +288,8 @@ async function renderRequest(
               watchUrl: `https://www.youtube.com/watch?v=${shortUpload.videoId}`,
               parentYouTubeVideoId: mainVideoId,
               privacyStatus: short.privacyStatus,
-              scheduledAt: short.scheduledAt ?? null
+              scheduledAt: short.scheduledAt ?? null,
+              containsSyntheticMedia: true
             }),
             retentionScore: 0,
             uploadPriorityScore: 0,
