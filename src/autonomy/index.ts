@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Prisma } from '@prisma/client';
 import { config } from '@/lib/config';
 import { getPrisma } from '@/lib/db';
 import { decryptSecret } from '@/lib/crypto-vault';
@@ -57,6 +58,10 @@ export interface AutonomyTickResult {
 
 function log(message: string): void {
   process.stdout.write(`${new Date().toISOString()} [autonomy] ${message}\n`);
+}
+
+function toJson(value: unknown): Prisma.InputJsonValue {
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
 function clampScore(value: unknown, fallback = 50): number {
@@ -243,14 +248,14 @@ async function persistProduction(args: {
       channelId: args.channelId,
       ideaId: idea.id,
       title: args.premium.title,
-      scriptJson: {
+      scriptJson: toJson({
         hook: args.premium.hook,
         text: args.premium.script,
         sources: args.dossier.sourceUrls,
         research: args.dossier
-      },
-      storyboardJson: storyboard,
-      metadataJson: {
+      }),
+      storyboardJson: toJson(storyboard),
+      metadataJson: toJson({
         title: args.premium.title,
         description: args.premium.description,
         tags: args.premium.tags,
@@ -269,13 +274,13 @@ async function persistProduction(args: {
           discoveredAt: args.candidate.discoveredAt,
           whyNow: args.candidate.whyNow
         }
-      },
-      complianceJson: args.compliance,
-      monetizationJson: {
+      }),
+      complianceJson: toJson(args.compliance),
+      monetizationJson: toJson({
         primary: 'youtube_ads',
         secondary: 'contextual_sponsor_or_affiliate_only_when_relevant',
         noFakeEngagement: true
-      },
+      }),
       readinessScore: Math.max(0, Math.min(100, args.opportunityScore)),
       uploadStatus: 'generating_assets'
     }
