@@ -31,6 +31,7 @@ export interface YouTubeUploadInput {
   privacyStatus: UploadPrivacyStatus;
   scheduledAt?: string;
   contentType?: string;
+  containsSyntheticMedia?: boolean;
 }
 
 export interface YouTubeUploadResult {
@@ -102,7 +103,8 @@ export async function uploadVideoToYouTube(
     status: {
       privacyStatus: input.privacyStatus,
       publishAt: input.scheduledAt,
-      selfDeclaredMadeForKids: false
+      selfDeclaredMadeForKids: false,
+      containsSyntheticMedia: input.containsSyntheticMedia
     }
   });
   const initRes = await fetchImpl(INIT_URL, {

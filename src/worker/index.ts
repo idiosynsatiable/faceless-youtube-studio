@@ -2,6 +2,7 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { config as runtimeConfig } from '@/lib/config';
 import { getPrisma } from '@/lib/db';
 import { decryptSecret } from '@/lib/crypto-vault';
 import {
@@ -12,6 +13,7 @@ import {
 import { runAssemblyJob } from './job-runner';
 import { hydrateUploadRequest } from './job-hydrator';
 import { hydrateRenderRequest } from './render-hydrator';
+import { planAutonomousShortUploads } from './shorts-publisher';
 import { uploadVideoToYouTube } from './youtube-uploader';
 import { createRedisQueueAdapter, unsupportedRedisAdapter, type QueueAdapter } from './queue';
 import type { JobOutcome, WorkerConfig } from './types';
@@ -21,6 +23,14 @@ function readEnv(name: string, fallback?: string): string {
   if (typeof value === 'string' && value.length > 0) return value;
   if (fallback !== undefined) return fallback;
   throw new Error(`missing required env var: ${name}`);
+}
+
+function jsonValue(value: unknown): any {
+  return JSON.parse(JSON.stringify(value));
+}
+
+function uploadedStatus(privacyStatus: string): string {
+  return `${privacyStatus}_uploaded`;
 }
 
 export function loadWorkerConfig(): WorkerConfig {
@@ -130,54 +140,184 @@ async function renderRequest(
   const metadataJson = project?.metadataJson as
     | { title?: string; description?: string; tags?: string[]; categoryRecommendation?: string }
     | null;
-  const upload = await uploadVideoToYouTube({
-    filePath: master.absolutePath,
-    refreshToken,
-    title: metadataJson?.title ?? project?.title ?? 'untitled',
-    description: metadataJson?.description ?? '',
-    tags: metadataJson?.tags ?? [],
-    categoryId: (metadataJson?.categoryRecommendation ?? '27').split(' ')[0],
-    privacyStatus: uploadRequest.privacyStatus,
-    scheduledAt: uploadRequest.scheduledAt
-  });
+  const title = metadataJson?.title ?? project?.title ?? 'untitled';
+  const description = metadataJson?.description ?? '';
+  const tags = metadataJson?.tags ?? [];
+  const categoryId = (metadataJson?.categoryRecommendation ?? '27').split(' ')[0];
+  const isAutonomous = uploadRequest.authorization === 'owner_autopilot';
 
-  if (!upload.ok) {
-    return {
-      ...assemblyOutcome,
-      status: 'failed',
-      errorMessage: `youtube upload failed: ${upload.reason}`,
-      errorCategory: 'unknown',
-      log: [...assemblyOutcome.log, `youtube upload: ${upload.reason} ${upload.detail}`]
-    };
+  const existingUpload = await prisma.uploadJob.findUnique({ where: { id: uploadRequest.id } });
+  let mainVideoId = existingUpload?.youtubeVideoId ?? null;
+  const uploadLog: string[] = [];
+
+  if (!mainVideoId) {
+    const upload = await uploadVideoToYouTube({
+      filePath: master.absolutePath,
+      refreshToken,
+      title,
+      description,
+      tags,
+      categoryId,
+      privacyStatus: uploadRequest.privacyStatus,
+      scheduledAt: uploadRequest.scheduledAt,
+      containsSyntheticMedia: isAutonomous
+    });
+
+    if (!upload.ok) {
+      return {
+        ...assemblyOutcome,
+        status: 'failed',
+        errorMessage: `youtube upload failed: ${upload.reason}`,
+        errorCategory: 'unknown',
+        log: [...assemblyOutcome.log, `youtube upload: ${upload.reason} ${upload.detail}`]
+      };
+    }
+    mainVideoId = upload.videoId;
+    uploadLog.push(`youtube ${upload.status}: ${upload.videoId}`);
+
+    try {
+      await prisma.uploadJob.upsert({
+        where: { id: uploadRequest.id },
+        update: {
+          youtubeVideoId: upload.videoId,
+          privacyStatus: uploadRequest.privacyStatus,
+          scheduledAt: uploadRequest.scheduledAt ? new Date(uploadRequest.scheduledAt) : null,
+          status: upload.status === 'scheduled' ? 'scheduled' : uploadedStatus(uploadRequest.privacyStatus),
+          errorMessage: null
+        },
+        create: {
+          id: uploadRequest.id,
+          userId: project?.userId ?? '',
+          videoProjectId: uploadRequest.videoProjectId,
+          youtubeVideoId: upload.videoId,
+          privacyStatus: uploadRequest.privacyStatus,
+          scheduledAt: uploadRequest.scheduledAt ? new Date(uploadRequest.scheduledAt) : null,
+          status: upload.status === 'scheduled' ? 'scheduled' : uploadedStatus(uploadRequest.privacyStatus)
+        }
+      });
+    } catch (err) {
+      log(`uploadJob persist failed: ${err instanceof Error ? err.message : 'unknown'}`);
+    }
+  } else {
+    uploadLog.push(`youtube upload already persisted: ${mainVideoId}; skipping duplicate master upload`);
   }
 
-  try {
-    await prisma.uploadJob.upsert({
-      where: { id: uploadRequest.id },
-      update: {
-        youtubeVideoId: upload.videoId,
-        privacyStatus: uploadRequest.privacyStatus,
-        scheduledAt: uploadRequest.scheduledAt ? new Date(uploadRequest.scheduledAt) : null,
-        status: upload.status === 'scheduled' ? 'scheduled' : 'private_uploaded',
-        errorMessage: null
-      },
-      create: {
-        id: uploadRequest.id,
-        userId: project?.userId ?? '',
-        videoProjectId: uploadRequest.videoProjectId,
-        youtubeVideoId: upload.videoId,
-        privacyStatus: uploadRequest.privacyStatus,
-        scheduledAt: uploadRequest.scheduledAt ? new Date(uploadRequest.scheduledAt) : null,
-        status: upload.status === 'scheduled' ? 'scheduled' : 'private_uploaded'
-      }
+  if (
+    isAutonomous &&
+    runtimeConfig.autonomy.uploadShorts &&
+    project?.userId &&
+    project.channelId
+  ) {
+    const shortPlans = planAutonomousShortUploads({
+      outputs: assemblyOutcome.outputs,
+      baseTitle: title,
+      baseDescription: description,
+      tags,
+      parentPrivacyStatus: uploadRequest.privacyStatus,
+      parentScheduledAt: uploadRequest.scheduledAt,
+      maxShorts: runtimeConfig.autonomy.shortsPerVideo,
+      spacingHours: runtimeConfig.autonomy.shortsSpacingHours
     });
-  } catch (err) {
-    log(`uploadJob persist failed: ${err instanceof Error ? err.message : 'unknown'}`);
+
+    const existingShorts = await prisma.shortsProject.findMany({
+      where: { videoProjectId: project.id },
+      select: { metadataJson: true }
+    });
+    const persistedIndexes = new Set(
+      existingShorts.flatMap((row) => {
+        const metadata = row.metadataJson as { shortIndex?: unknown } | null;
+        return typeof metadata?.shortIndex === 'number' ? [metadata.shortIndex] : [];
+      })
+    );
+
+    for (const short of shortPlans) {
+      if (persistedIndexes.has(short.index)) {
+        uploadLog.push(`short ${short.index + 1} already persisted; skipping duplicate upload`);
+        continue;
+      }
+      const shortUpload = await uploadVideoToYouTube({
+        filePath: short.filePath,
+        refreshToken,
+        title: short.title,
+        description: short.description,
+        tags: short.tags,
+        categoryId,
+        privacyStatus: short.privacyStatus,
+        scheduledAt: short.scheduledAt,
+        containsSyntheticMedia: true
+      });
+
+      if (!shortUpload.ok) {
+        uploadLog.push(`short ${short.index + 1} upload failed without retrying master: ${shortUpload.reason} ${shortUpload.detail}`);
+        try {
+          await prisma.shortsProject.create({
+            data: {
+              userId: project.userId,
+              channelId: project.channelId,
+              videoProjectId: project.id,
+              title: short.title,
+              hook: 'Autonomous short-form derivative of verified long-form package',
+              scriptJson: jsonValue({ parentVideoProjectId: project.id }),
+              visualPlanJson: jsonValue({ outputPath: short.filePath, profile: 'YouTube Shorts 9:16', shortIndex: short.index }),
+              metadataJson: jsonValue({ shortIndex: short.index, uploadError: shortUpload.reason, detail: shortUpload.detail }),
+              retentionScore: 0,
+              uploadPriorityScore: 0,
+              status: 'upload_failed'
+            }
+          });
+        } catch (err) {
+          log(`failed Short persistence also failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+        continue;
+      }
+
+      const shortStatus = shortUpload.status === 'scheduled' ? 'scheduled' : uploadedStatus(short.privacyStatus);
+      try {
+        const shortsProject = await prisma.shortsProject.create({
+          data: {
+            userId: project.userId,
+            channelId: project.channelId,
+            videoProjectId: project.id,
+            title: short.title,
+            hook: 'Autonomous short-form derivative of verified long-form package',
+            scriptJson: jsonValue({ parentVideoProjectId: project.id }),
+            visualPlanJson: jsonValue({ outputPath: short.filePath, profile: 'YouTube Shorts 9:16', shortIndex: short.index }),
+            metadataJson: jsonValue({
+              shortIndex: short.index,
+              youtubeVideoId: shortUpload.videoId,
+              watchUrl: `https://www.youtube.com/watch?v=${shortUpload.videoId}`,
+              parentYouTubeVideoId: mainVideoId,
+              privacyStatus: short.privacyStatus,
+              scheduledAt: short.scheduledAt ?? null,
+              containsSyntheticMedia: true
+            }),
+            retentionScore: 0,
+            uploadPriorityScore: 0,
+            status: shortStatus
+          }
+        });
+        if (short.scheduledAt) {
+          await prisma.shortsCalendarItem.create({
+            data: {
+              userId: project.userId,
+              channelId: project.channelId,
+              shortsProjectId: shortsProject.id,
+              scheduledFor: new Date(short.scheduledAt),
+              status: 'scheduled',
+              topicCluster: project.title
+            }
+          });
+        }
+        uploadLog.push(`short ${short.index + 1} ${shortUpload.status}: ${shortUpload.videoId}`);
+      } catch (err) {
+        uploadLog.push(`short ${short.index + 1} uploaded but persistence failed: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
   }
 
   return {
     ...assemblyOutcome,
-    log: [...assemblyOutcome.log, `youtube ${upload.status}: ${upload.videoId}`]
+    log: [...assemblyOutcome.log, ...uploadLog]
   };
 }
 
