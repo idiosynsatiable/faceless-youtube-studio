@@ -1,5 +1,6 @@
 // Central runtime configuration. Reads only environment variables.
-// All integrations support a disabled-safe mode when their env vars are not set.
+// Optional integrations retain disabled-safe behavior; production infrastructure
+// requirements are validated explicitly by assertProductionConfig().
 
 export interface RuntimeConfig {
   appUrl: string;
@@ -46,19 +47,17 @@ export function loadConfig(): RuntimeConfig {
   const stripeWebhook = read('STRIPE_WEBHOOK_SECRET');
   const ytClientId = read('YOUTUBE_CLIENT_ID');
   const ytClientSecret = read('YOUTUBE_CLIENT_SECRET');
-  const jwtSecret = read('JWT_SECRET', 'change_me_with_secure_local_secret');
-  const aiKey = read('OPENAI_API_KEY');
 
   return {
     appUrl: read('NEXT_PUBLIC_APP_URL', 'http://localhost:3000'),
     databaseUrl: read('DATABASE_URL'),
     redisUrl: read('REDIS_URL'),
-    jwtSecret,
-    oauthStateSecret: read('OAUTH_STATE_SECRET', jwtSecret),
+    jwtSecret: read('JWT_SECRET'),
+    oauthStateSecret: read('OAUTH_STATE_SECRET'),
     ai: {
       provider: read('AI_PROVIDER', 'openai'),
-      apiKey: aiKey,
-      enabled: aiKey.length > 0
+      apiKey: read('OPENAI_API_KEY'),
+      enabled: read('OPENAI_API_KEY').length > 0
     },
     stripe: {
       enabled: stripeSecret.length > 0 && stripeWebhook.length > 0,
@@ -82,3 +81,31 @@ export function loadConfig(): RuntimeConfig {
 }
 
 export const config = loadConfig();
+
+export function productionConfigIssues(current: RuntimeConfig = config): string[] {
+  if (process.env.NODE_ENV !== 'production') return [];
+
+  const issues: string[] = [];
+  if (!current.appUrl.startsWith('https://')) issues.push('NEXT_PUBLIC_APP_URL must use HTTPS in production');
+  if (current.jwtSecret.length < 32) issues.push('JWT_SECRET must be at least 32 characters in production');
+  if (current.oauthStateSecret.length < 32) issues.push('OAUTH_STATE_SECRET must be at least 32 characters in production');
+  if (!current.databaseUrl) issues.push('DATABASE_URL is required in production');
+  if (!current.redisUrl) issues.push('REDIS_URL is required in production');
+  if (!current.youtube.enabled) issues.push('YOUTUBE_CLIENT_ID and YOUTUBE_CLIENT_SECRET are required in production');
+  if (!current.youtube.authorizedChannelHandle) {
+    issues.push('YOUTUBE_AUTHORIZED_CHANNEL_HANDLE is required in production');
+  } else if (current.youtube.authorizedChannelHandle !== 'idiosynsatiable') {
+    issues.push('YOUTUBE_AUTHORIZED_CHANNEL_HANDLE must be idiosynsatiable');
+  }
+  if (current.youtube.enabled && !current.youtube.redirectUri.startsWith('https://')) {
+    issues.push('YOUTUBE_REDIRECT_URI must use HTTPS in production');
+  }
+  return issues;
+}
+
+export function assertProductionConfig(): void {
+  const issues = productionConfigIssues();
+  if (issues.length > 0) {
+    throw new Error(`Production configuration is incomplete: ${issues.join('; ')}`);
+  }
+}

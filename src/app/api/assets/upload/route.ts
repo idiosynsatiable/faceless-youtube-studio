@@ -4,6 +4,7 @@ import path from 'node:path';
 import { z } from 'zod';
 import { safeFilename } from '@/lib/security';
 import { safeJoinUnderRoot } from '@/worker/path-allowlist';
+import { clientKey, rateLimit } from '@/lib/rate-limit';
 
 export const runtime = 'nodejs';
 
@@ -70,6 +71,14 @@ function resolveMime(file: File): string {
 }
 
 export async function POST(request: Request) {
+  const limit = rateLimit(`assets:upload:${clientKey(request.headers)}`, { capacity: 30, windowMs: 60_000 });
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { ok: false, error: 'rate_limited', retryAfterMs: limit.resetMs },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(limit.resetMs / 1000)) } }
+    );
+  }
+
   let form: FormData;
   try {
     form = await request.formData();

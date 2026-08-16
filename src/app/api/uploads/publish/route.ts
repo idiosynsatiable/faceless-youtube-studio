@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { uploadPublishInput, uploadPrepareInput } from '@/lib/validators';
 import { preparePackage, publishOutcome } from '@/lib/youtube-upload';
 import { config } from '@/lib/config';
+import { clientKey, rateLimit } from '@/lib/rate-limit';
 import {
   getQueueProducer,
   QueueDisabledError,
@@ -12,6 +13,14 @@ import {
 export const runtime = 'nodejs';
 
 export async function POST(request: Request) {
+  const limit = rateLimit(`uploads:publish:${clientKey(request.headers)}`, { capacity: 5, windowMs: 60_000 });
+  if (!limit.allowed) {
+    return NextResponse.json(
+      { ok: false, reason: 'rate_limited', retryAfterMs: limit.resetMs },
+      { status: 429, headers: { 'Retry-After': String(Math.ceil(limit.resetMs / 1000)) } }
+    );
+  }
+
   let body: unknown;
   try {
     body = await request.json();
